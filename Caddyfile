@@ -1,0 +1,6 @@
+# Replace with your domain; Caddy then gets a certificate on its own.
+{$SITE_ADDRESS:localhost} {
+	encode zstd gzip
+	# WebSockets need no special config in Caddy 2 - reverse_proxy upgrades them.
+	reverse_proxy app:3000
+}
