@@ -6,7 +6,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
-#include <algo/yespower/yespower.h>
 
 void minotaurhash(void *output, const void *input, bool minotaurX);
 
@@ -41,20 +40,6 @@ int32_t mine(uint8_t *header80, const uint8_t *target32,
         }
     }
     return -1;
-}
-
-/* One bare yespower(2048,8) round - the same work yescrypt does per hash.
-   Lets us compare algorithms without pulling in a second upstream. */
-int32_t bench_yespower(const uint8_t *input64, uint32_t rounds, uint8_t *out32)
-{
-    static const yespower_params_t params = {YESPOWER_1_0, 2048, 8, "et in arcadia ego", 17};
-    uint8_t buf[64];
-    memcpy(buf, input64, 64);
-    for (uint32_t i = 0; i < rounds; i++) {
-        buf[0] = (uint8_t)i;
-        if (yespower_tls(buf, 64, &params, (yespower_binary_t *)out32) != 0) return -1;
-    }
-    return 0;
 }
 
 /* Hash one header as-is, no nonce loop. Used by the vector test. */

@@ -8,6 +8,8 @@
 // per field is spelled out below. Getting this wrong yields hashes that are
 // perfectly valid and rejected by every pool, so it is worth the comments.
 
+import type { MinerAlgo } from "@outmine/protocol";
+
 const hexToBytes = (hex: string) => Uint8Array.from(hex.match(/../g) ?? [], (b) => parseInt(b, 16));
 export const bytesToHex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 
@@ -57,6 +59,19 @@ export function buildHeader(job: StratumJob, extranonce1: string, extranonce2: s
   // bytes 76..79 are the nonce, written by the WASM miner.
   return header;
 }
+
+/** How the winning nonce goes back to the pool: cpuminer-multi's minotaur submits
+ *  `le32enc(work->data[19])`, cpuminer-opt's rinhash `be32enc` of the same word.
+ *
+ *  Both algorithms hash the identical 80 bytes above, and each writes the nonce into
+ *  bytes 76..79 in its own order - big-endian for MinotaurX, little-endian for
+ *  RinHash - yet the hex they hand the pool differs in the opposite direction. That
+ *  is not a rule anyone could derive; all four combinations were put to zpool and
+ *  this is the one it accepts. hub.integration.test.ts is what keeps it honest. */
+export const NONCE_SUBMIT_LITTLE_ENDIAN: Record<MinerAlgo, boolean> = {
+  minotaurx: true,
+  rinhash: false,
+};
 
 /** Port of cpuminer's diff_to_target. MinotaurX uses it with no difficulty factor. */
 export function diffToTarget(diff: number): Uint8Array {

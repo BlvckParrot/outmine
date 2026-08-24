@@ -2,7 +2,7 @@ node_modules/
 packages/wasm/vendor/
 packages/wasm/build/
 packages/web/dist/
-packages/web/public/mine.mjs
-packages/web/public/mine.wasm
+packages/web/public/mine-*.mjs
+packages/web/public/mine-*.wasm
 data/
 .env

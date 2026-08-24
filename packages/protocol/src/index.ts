@@ -5,6 +5,12 @@
 
 export type ListingKind = "domain" | "handle";
 
+/** Which proof-of-work the pool is being mined with. The browser needs it to load the
+ *  matching WASM module: hashing MinotaurX at a RinHash pool is not an error anywhere,
+ *  it just means every single share is rejected. */
+export const MINER_ALGOS = ["minotaurx", "rinhash"] as const;
+export type MinerAlgo = (typeof MINER_ALGOS)[number];
+
 export type BoardEntry = {
   id: string;
   kind: ListingKind;
@@ -52,7 +58,10 @@ export type BoardSnapshot = {
 
 export type ServerMessage =
   | ({ t: "board" } & BoardSnapshot)
-  | { t: "job"; jobId: string; header: string; target: string }
+  /** `algo` rides along with the work rather than being announced once: it is needed
+   *  exactly when a job is, and a reconnect to a server configured differently then
+   *  cannot leave a worker hashing the wrong function. */
+  | { t: "job"; jobId: string; header: string; target: string; algo: MinerAlgo }
   | { t: "shareResult"; ok: boolean; error: string | null }
   | { t: "error"; message: string };
 

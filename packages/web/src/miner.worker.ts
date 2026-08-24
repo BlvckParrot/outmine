@@ -1,10 +1,15 @@
 // One worker = one mining thread. Each gets its own WASM instance and its own
 // slice of the nonce space, so threads never duplicate work on the same job.
+import type { MinerAlgo } from "@outmine/protocol";
 import type { OutmineModule } from "@outmine/wasm";
 
-type Job = { jobId: string; header: string; target: string };
+type Job = { jobId: string; header: string; target: string; algo: MinerAlgo };
 
-const CHUNK = 2_000; // nonces per call: long enough to amortise the call, short enough to stay responsive
+// Nonces per call. Long enough that the call overhead is nothing next to the hashing,
+// short enough that a new job, a throttle change or stop is acted on promptly: at
+// MinotaurX's ~900 H/s the old 2000 meant the worker was deaf for over two seconds,
+// and every share found for a job that had already moved on was thrown away.
+const CHUNK = 200;
 const unhex = (s: string) => Uint8Array.from(s.match(/../g)!.map((b) => parseInt(b, 16)));
 
 let Module: OutmineModule;
@@ -13,27 +18,33 @@ let nonce = 0;
 let throttle = 0; // 0 = flat out, 0.8 = idle 80% of the time
 let running = false;
 
-// Loaded at runtime rather than bundled: emscripten's glue resolves mine.wasm
+type Buffers = { header: number; target: number; out: number };
+
+// Loaded at runtime rather than bundled: emscripten's glue resolves its .wasm
 // relative to itself, so the path must reach the browser untouched. Going through a
 // variable also stops TypeScript trying to resolve it.
 //
-// Absolute, not root-relative: given "/mine.mjs" Vite's dev server treats the import
-// as one of its own modules and serves it as /mine.mjs?import, which the glue does
+// Absolute, not root-relative: given "/mine-x.mjs" Vite's dev server treats the import
+// as one of its own modules and serves it as /mine-x.mjs?import, which the glue does
 // not survive. A full URL is left alone, in dev and in the build alike.
-const WASM_URL = new URL("/mine.mjs", self.location.origin).href;
+//
+// Which module, and therefore which proof-of-work, comes from the job - so a worker
+// cannot start hashing before the server has said what it wants, and 380 kB of
+// MinotaurX is never downloaded by a site mining RinHash.
+let ready: Promise<Buffers> | null = null;
 
-const ready = (import(/* @vite-ignore */ WASM_URL) as Promise<{
-  default: () => Promise<OutmineModule>;
-}>)
-  .then((mod) => mod.default())
-  .then((m) => {
-  Module = m;
-  return {
-    header: m._malloc(80),
-    target: m._malloc(32),
-    out: m._malloc(32),
-  };
-  });
+function load(algo: MinerAlgo): Promise<Buffers> {
+  const url = new URL(`/mine-${algo}.mjs`, self.location.origin).href;
+  ready ??= (import(/* @vite-ignore */ url) as Promise<{
+    default: () => Promise<OutmineModule>;
+  }>)
+    .then((mod) => mod.default())
+    .then((m) => {
+      Module = m;
+      return { header: m._malloc(80), target: m._malloc(32), out: m._malloc(32) };
+    });
+  return ready;
+}
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data;
@@ -51,7 +62,7 @@ self.onmessage = async (e: MessageEvent) => {
 };
 
 async function loop() {
-  const ptr = await ready;
+  const ptr = await load(job!.algo);
   running = true;
 
   // Hashrate is measured over wall-clock time and counts only nonces actually

@@ -150,27 +150,47 @@ replying, so silence counts against the client too.
 
 ## What it earns
 
-Measured, not estimated. Single WASM thread on an Apple M-series: **877 H/s**
-(`bun run bench`).
+**Algorithm choice moves revenue by orders of magnitude; nothing else comes close.**
+Measured on an Apple M-series, one WASM thread, with `bun run bench`:
 
-```
-0.000877 MH/s x 0.000122 BTC/MH/day x $76,700  =  $0.0000082 / thread-day
-```
+| | H/s | zpool rate | BTC/day/thread |
+|---|---|---|---|
+| minotaurx | 896 | 0.00013543 /MH/day | 1.2e-7 |
+| **rinhash** | **14,025** | **0.00485204 /MH/day** | **6.8e-5** |
 
-| Concurrently mining tabs (4 threads each) | Monthly |
-|---|---|
-| 100 | ~$10 |
-| 1,000 | ~$100 |
-| 10,000 | ~$1,000 |
+**The hashrate column is measured and certain; the rate column is not.** RinHash runs
+**15.6x faster** in a browser because its Argon2d touches 64 KiB where yespower
+touches 2 MiB — that much is ours to verify, and on its own it is reason enough to
+prefer it. The rate is zpool's own advertisement, and it does not survive a sanity
+check: 0.00485 BTC per MH/s per day is $372 a day for one megahash, which would have
+every CPU on earth pointed at this coin by tomorrow. The pool has fifty miners on it.
 
-Browser mining pays little; that is the honest baseline for 2026. The leaderboard is
-what makes it worth anything: a normal page gets a 30-second visit, a board people
-compete on gets a tab left open for hours.
+So take the last column as an upper bound with a broken unit, not a forecast. What
+*is* measured end to end, by watching the payout address across a mining run: at
+MinotaurX, 3.1 kH/s for three minutes credited 9.5e-11 BTC, which is **1.3e-8
+BTC/day/thread** — a tenth of what the same table predicts. Read that way, a thousand
+tabs of four threads is about $120 a month at $76,700/BTC on MinotaurX, and RinHash is
+worth somewhere between 15x and rather more than that.
 
-**Algorithm choice is the only number that really moves revenue.** minotaurx pays
-230x what yespower does per hash. yescrypt was measured too: one bare yespower round
-costs the same as a whole minotaurx hash, so both algorithms run at the same speed in
-a browser and minotaurx simply pays 1.4x more. Re-check with `bun scripts/rank-algos.ts`.
+`scripts/measure-yield.ts` is how that gets settled: it mines for a couple of hours
+and divides the credited BTC by the hashes that earned it. Run it per algorithm before
+believing any ratio, including this one.
+
+Browser mining pays little either way; that is the honest baseline for 2026, and zpool
+does not pay out below 0.00075 BTC. The leaderboard is what makes any of it worth
+anything: a normal page gets a 30-second visit, a board people compete on gets a tab
+left open for hours.
+
+### Why not SIMD
+
+yespower ships an SSE2 path and warns at compile time when it is not enabled, so
+`-msimd128 -msse2` looks like free money. It is not: measured in Chromium and in Bun
+on Apple Silicon, the SIMD build runs MinotaurX at **0.85x** the plain scalar one.
+`-msse4.1`, `-mrelaxed-simd`, `-flto`, `emmalloc` and a fixed heap were measured too
+and are noise. The SSE2 shuffles do not survive the trip through WASM to NEON. This
+may well go the other way on an x86 browser, where wasm SIMD maps almost one to one —
+untested here, and not worth shipping a build that is slower for every Mac visitor on
+the chance that it is faster elsewhere.
 
 ## Before deploying
 
@@ -210,15 +230,29 @@ a mistyped number stops the server with the name of the offending variable inste
 quietly becoming `NaN`. `.env.example` lists all of them with their defaults.
 
 Only `POOL_USER` is required. The rest have defaults that work, and the ones worth
-knowing about are the visibility threshold (`VISIBILITY_THRESHOLD`, 600 shares),
-the icon gate (`ICON_MIN_POINTS`, 2000 points), the pool grouping
-(`MINERS_PER_CONNECTION`, `MAX_POOL_CONNECTIONS`) and the origin policy below.
+knowing about are the algorithm (`POOL_ALGO`, `POOL_HOST`, `POOL_PORT` — see below),
+the visibility threshold (`VISIBILITY_THRESHOLD`, 600 shares), the icon gate
+(`ICON_MIN_POINTS`, 2000 points), the pool grouping (`MINERS_PER_CONNECTION`,
+`MAX_POOL_CONNECTIONS`) and the origin policy below.
+
+`POOL_ALGO` decides which WASM module the browser downloads and how a nonce is
+submitted, and it has to agree with the host and port. Mining one algorithm at
+another's pool is not an error anywhere: the pool accepts the connection, hands out
+work, and calls every share invalid. The server refuses to start when the host names
+a different known algorithm, which catches the realistic version of that mistake.
+
+`POOL_PASS` also carries zpool's static difficulty knob: `c=BTC,d=0.00005` pins the
+share target instead of letting vardiff find it. Useful for tests — at the default
+difficulty one browser thread needs 2.15M hashes, about two and a half minutes, to
+find a single RinHash share, and a check that waits ninety seconds fails for no
+reason. Leave it off in production; vardiff sizes itself to the whole shared
+connection, which is the right unit.
 
 ## Layout
 
 ```
 packages/protocol/   the WebSocket contract, imported by both server and browser
-packages/wasm/       MinotaurX hasher, compiled from cpuminer-multi with emcc
+packages/wasm/       MinotaurX and RinHash hashers, compiled to WASM with emcc
 packages/web/
   index.css          the two palettes, the four faces, the Tailwind theme
   App.tsx            layout: consent, the mining panel, the page the URL names
@@ -245,7 +279,7 @@ packages/server/
   blockheader.ts     stratum job -> the 80 bytes the miner hashes
   listings.ts        target normalisation and every SQL statement in the project
   db.ts              the connection, the pragmas, the liveness probe
-scripts/             backup, browser check, algorithm ranking
+scripts/             backup, browser check, yield measurement
 ```
 
 Bun workspaces. Still one deployed process and one SQLite file; two runtime
@@ -256,8 +290,10 @@ reach into server code, and the shared contract is a package rather than a relat
 path.
 
 First load is 72 kB of JavaScript and 6 kB of CSS, both gzipped, plus 68 kB of fonts;
-latin-ext adds 29 kB and only for a page that needs it. The WASM miner is another
-175 kB and downloads when somebody presses a button, not before.
+latin-ext adds 29 kB and only for a page that needs it. The WASM miner downloads when
+somebody presses a button, not before, and only the module the server asked for:
+RinHash is 14 kB gzipped against MinotaurX's 175 kB, because sixteen sphlib hash
+functions do not come cheap.
 
 Two rules hold this together. **Every SQL statement lives in `listings.ts`**, so the
 ordering of the board, its tie-break and the rank a badge prints cannot drift apart -
@@ -309,7 +345,9 @@ bun run check     # typecheck, then hash vectors, framing, header assembly, norm
 
 # Real shares against zpool; needs a server running and an explicit opt-in, because
 # Bun auto-loads .env and POOL_USER alone would make `check` demand a live pool.
-INTEGRATION=1 bun test packages/server/src/hub.integration.test.ts
+# POOL_ALGO must match the server under test - this is the only check that can tell
+# a header or nonce laid out for the wrong algorithm from a bad network.
+INTEGRATION=1 POOL_ALGO=rinhash bun test packages/server/src/hub.integration.test.ts
 
 BASE=http://localhost:5173 bun scripts/browser-check.ts  # consent, mine, shares land
 ```

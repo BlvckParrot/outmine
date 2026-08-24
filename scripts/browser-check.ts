@@ -56,8 +56,16 @@ const finalHashrate = await readStat("hashrate");
 
 // The board must show that somebody is on this listing. The number comes from the hub
 // counting sockets, so a mismatch here means the snapshot and reality have drifted.
-const minersShown = await page.locator("ol li", { hasText: /\d+ mining/ }).count();
-console.log(`miners shown on a row: ${minersShown > 0}`);
+//
+// With a wait, because on a fresh install the listing being mined is still in the
+// queue: it only reaches the board when the flush loop writes the share out, up to
+// FLUSH_MS later. Asserting the instant a share lands failed for timing, not drift.
+const minerRow = page.locator("ol li", { hasText: /\d+ mining/ }).first();
+const minersShown = await minerRow
+  .waitFor({ timeout: 60_000 })
+  .then(() => true)
+  .catch(() => false);
+console.log(`miners shown on a row: ${minersShown}`);
 
 // Navigating must not stop mining. The socket and the workers live in the shell, so a
 // page that owned them - the obvious structure - would silently kill the miner here.
@@ -81,7 +89,7 @@ await page.screenshot({ path: `${SHOT}/04-returning-visitor.png` });
 
 const checks = {
   accepted: finalAccepted > 0,
-  minersShown: minersShown > 0,
+  minersShown,
   survivedNavigation: onAbout && stillMining && acceptedAfterNav >= finalAccepted,
   consentRemembered: !bannerBack,
   resumeOffered,

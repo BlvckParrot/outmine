@@ -4,12 +4,18 @@
 //
 // Skipped unless POOL_USER is set, since it needs a payout address and network.
 import { expect, test } from "bun:test";
+import { MINER_ALGOS, type MinerAlgo } from "@outmine/protocol";
 import { createModule } from "@outmine/wasm";
 
 // Explicit opt-in, not merely "POOL_USER is set": Bun auto-loads .env, so keying off
 // the payout address alone makes `bun run check` demand a live server and a live pool.
 const RUN = process.env.INTEGRATION === "1" && !!process.env.POOL_USER;
 const BASE = process.env.TEST_BASE ?? "http://localhost:3000";
+// Must match the server under test: this is the check that catches a header or nonce
+// laid out for the wrong algorithm, and it can only catch it by hashing the same way.
+const ALGO = (MINER_ALGOS as readonly string[]).includes(process.env.POOL_ALGO ?? "")
+  ? (process.env.POOL_ALGO as MinerAlgo)
+  : "minotaurx";
 
 test.skipIf(!RUN)("a browser-equivalent client moves a listing onto the board", async () => {
   const target = `test-${Date.now()}.example.com`;
@@ -20,7 +26,7 @@ test.skipIf(!RUN)("a browser-equivalent client moves a listing onto the board", 
   }).then((r) => r.json());
   expect(created.listing?.id).toBeTruthy();
 
-  const Module = await createModule();
+  const Module = await createModule(ALGO);
   const inPtr = Module._malloc(80);
   const tPtr = Module._malloc(32);
   const outPtr = Module._malloc(32);
@@ -117,7 +123,7 @@ test.skipIf(!RUN)("two miners share one pool socket without crossing credit", as
 
   const ids = [await make("MuxA"), await make("MuxB")];
 
-  const Module = await createModule();
+  const Module = await createModule(ALGO);
   const unhex = (s: string) => Uint8Array.from(s.match(/../g)!.map((b) => parseInt(b, 16)));
 
   // Handlers are attached in the same tick the socket is created. Awaiting them one

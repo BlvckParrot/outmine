@@ -1,7 +1,13 @@
 # The WASM miner is built from C sources, so the image needs emscripten once.
 FROM emscripten/emsdk:4.0.7 AS wasm
 WORKDIR /build/packages/wasm
-RUN git clone --depth 1 https://github.com/litecoincash-project/cpuminer-multi.git vendor/cpuminer-multi
+# Cloned here rather than left to build.sh so the sources cache in their own layer,
+# independent of the COPY below. build.sh skips a clone that is already present.
+RUN git clone --depth 1 https://github.com/litecoincash-project/cpuminer-multi.git vendor/cpuminer-multi \
+ && git clone --depth 1 --filter=blob:none --sparse https://github.com/Rin-coin/cpuminer-opt-rin.git vendor/cpuminer-opt-rin \
+ && git -C vendor/cpuminer-opt-rin sparse-checkout set algo/rinhash \
+ && curl -sSfL -o vendor/cpuminer-opt-rin/algo/rinhash/argon2d/ref.c \
+      https://raw.githubusercontent.com/P-H-C/phc-winner-argon2/master/src/ref.c
 COPY packages/wasm ./
 RUN ./build.sh
 

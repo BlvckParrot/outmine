@@ -1,9 +1,12 @@
 // Owns the worker pool. The server hands out jobs; workers hand back nonces.
+import type { MinerAlgo } from "@outmine/protocol";
+
+type Job = { jobId: string; header: string; target: string; algo: MinerAlgo };
 
 export class Miner {
   #workers: Worker[] = [];
   #rates = new Map<number, number>();
-  #job: { jobId: string; header: string; target: string } | null = null;
+  #job: Job | null = null;
   #throttle = 0;
 
   constructor(
@@ -33,7 +36,7 @@ export class Miner {
     if (this.#job) this.setJob(this.#job);
   }
 
-  setJob(job: { jobId: string; header: string; target: string }) {
+  setJob(job: Job) {
     // Workers restart their nonce range on every job, which is right for new work and
     // pure waste for a repeat: they would re-hash the same nonces and submit shares the
     // pool rejects as duplicates. Compare the header, not the id - a reconnect brings a

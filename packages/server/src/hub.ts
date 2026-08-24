@@ -4,7 +4,9 @@
 // upstream, so there is nothing to cheat and no heuristic to tune.
 import type { ServerWebSocket } from "bun";
 import type { BoardSnapshot, ClientMessage, ServerMessage } from "@outmine/protocol";
-import { buildHeader, bytesToHex, diffToTarget, type StratumJob } from "./blockheader";
+import {
+  buildHeader, bytesToHex, diffToTarget, NONCE_SUBMIT_LITTLE_ENDIAN, type StratumJob,
+} from "./blockheader";
 import { config } from "./config";
 import { countBoard, creditShares, listBoard, listingExists } from "./listings";
 import { log, makeThrottledLog } from "./log";
@@ -239,6 +241,7 @@ function broadcastJob(conn: PoolConnection, only?: Client) {
       t: "job",
       jobId: job.jobId,
       header: bytesToHex(buildHeader(job, conn.extranonce1, extranonce2Of(miner, conn))),
+      algo: config.pool.algo,
       target,
     });
   }
@@ -284,7 +287,7 @@ function submitShare(client: Client, jobId: string, nonce: number) {
   }
 
   const bytes = new Uint8Array(4);
-  new DataView(bytes.buffer).setUint32(0, nonce >>> 0, true); // cpuminer submits it little-endian
+  new DataView(bytes.buffer).setUint32(0, nonce >>> 0, NONCE_SUBMIT_LITTLE_ENDIAN[config.pool.algo]);
   const id = conn.stratum.submit(jobId, extranonce2Of(client, conn), job.ntime, bytesToHex(bytes));
   conn.submits.set(id, client);
 }

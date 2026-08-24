@@ -38,7 +38,10 @@ export function useMiner(): MinerSession {
   const [hashrate, setHashrate] = useState(0);
   const [accepted, setAccepted] = useState(0);
   const [rejected, setRejected] = useState(0);
-  const [threads, setThreads] = useState(() => Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
+  // Every core but one. Half the cores was the cautious default from when throttle
+  // also started at 30%; with the throttle off, this is the last free multiple, and
+  // the slider is right there for anyone who wants their laptop quiet.
+  const [threads, setThreads] = useState(() => Math.max(1, (navigator.hardwareConcurrency || 4) - 1));
   // Off by default: someone who pressed "mine for this" asked for the CPU, and a
   // machine that is already idling at 30% before they touch the slider reads as a
   // miner that does not work. The slider is right there for a phone or a laptop.

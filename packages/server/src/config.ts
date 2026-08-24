@@ -4,6 +4,8 @@
 // there was no way to see what was configurable, a typo in a number silently became
 // NaN, and a missing payout address was only noticed on the pool dashboard.
 
+import { MINER_ALGOS, type MinerAlgo } from "@outmine/protocol";
+
 const problems: string[] = [];
 
 function str(name: string, fallback?: string): string {
@@ -29,6 +31,16 @@ function int(name: string, fallback: number, { min = 0, max = Number.MAX_SAFE_IN
     return fallback;
   }
   return value;
+}
+
+function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  if (!allowed.includes(raw as T)) {
+    problems.push(`${name} must be one of ${allowed.join(", ")}, got ${JSON.stringify(raw)}`);
+    return fallback;
+  }
+  return raw as T;
 }
 
 function list(name: string): string[] {
@@ -63,8 +75,13 @@ export const config = {
   webDist: process.env.WEB_DIST?.trim() || new URL("../../web/dist", import.meta.url).pathname,
 
   pool: {
-    host: str("POOL_HOST", "minotaurx.mine.zpool.ca"),
-    port: int("POOL_PORT", 7019, { min: 1, max: 65535 }),
+    host: str("POOL_HOST", "rinhash.mine.zpool.ca"),
+
+    /** The proof-of-work this pool wants. Decides which WASM module the browser
+     *  loads, how the header is laid out, and how a nonce is submitted. */
+    algo: oneOf<MinerAlgo>("POOL_ALGO", MINER_ALGOS, "rinhash"),
+
+    port: int("POOL_PORT", 7444, { min: 1, max: 65535 }),
     /** Payout address. Required: mining to an empty user credits nobody and nothing
      *  else in the system complains. */
     user: str("POOL_USER"),
@@ -159,6 +176,19 @@ export const config = {
     trustedProxies: int("TRUSTED_PROXIES", 0, { min: 0, max: 10 }),
   },
 } as const;
+
+// A host named for one algorithm with POOL_ALGO set to another is the single mistake
+// that costs everything and reports nothing: the pool takes the connection, hands out
+// work, and rejects every share as invalid. Only a host that names a *different* known
+// algorithm counts, so a neutral or self-hosted hostname raises nothing.
+for (const other of MINER_ALGOS) {
+  if (other !== config.pool.algo && config.pool.host.toLowerCase().includes(other)) {
+    problems.push(
+      `POOL_HOST is ${config.pool.host} but POOL_ALGO is ${config.pool.algo}` +
+        ` - mining ${config.pool.algo} at a ${other} pool means every share is rejected`,
+    );
+  }
+}
 
 /** Prints anything wrong with the environment and stops the process.
  *
