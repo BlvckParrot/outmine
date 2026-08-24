@@ -32,3 +32,9 @@ export const rememberConsent = () => write("outmine:consent", CONSENT_VERSION);
  *  the comment at the call site for why it never starts mining by itself. */
 export const lastListing = () => read("outmine:listing");
 export const rememberListing = (id: string | null) => write("outmine:listing", id);
+
+/** Light or dark. The same key is read by the inline script in index.html, which has
+ *  to run before React does or a stored dark theme flashes white on every load. */
+export type Theme = "light" | "dark";
+export const storedTheme = (): Theme => (read("outmine:theme") === "dark" ? "dark" : "light");
+export const rememberTheme = (theme: Theme) => write("outmine:theme", theme);

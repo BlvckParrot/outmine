@@ -7,11 +7,11 @@ import { fmt, points } from "../format";
  *  that turns visitors into miners does not get to be vague about the total. */
 export function Stats() {
   const stats = usePolled<StatsResponse>("/api/stats", 15_000);
-  if (!stats) return <p className="mt-8 text-sm text-zinc-500">Loading…</p>;
+  if (!stats) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
   return (
-    <section className="mt-8">
-      <h1 className="text-2xl font-bold text-white">Numbers</h1>
+    <section>
+      <h1 className="text-2xl font-bold tracking-[-0.02em]">Numbers</h1>
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatTile size="lg" label="shares accepted" value={fmt(stats.shares)} />
         <StatTile size="lg" label="shares, last 24h" value={fmt(stats.shares24h)} />
@@ -23,7 +23,7 @@ export function Stats() {
         <StatTile size="lg" label="mining now" value={String(stats.mining)} />
         <StatTile size="lg" label="pool sockets" value={String(stats.poolConnections)} />
       </div>
-      <p className="mt-6 text-xs text-zinc-600">
+      <p className="mt-6 text-xs text-muted-foreground">
         No figure in currency: the exchange rate is not ours to quote and an estimate would read as
         a promise. A share is one unit of work the pool accepted, and a point is pool difficulty
         scaled so the numbers are readable.

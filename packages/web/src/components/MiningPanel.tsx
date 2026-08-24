@@ -1,3 +1,4 @@
+import { Pickaxe } from "lucide-react";
 import { fmt } from "../format";
 import { StatTile } from "./ui";
 
@@ -8,12 +9,16 @@ export function MiningPanel(props: {
 }) {
   const cores = navigator.hardwareConcurrency || 8;
   return (
-    <div className="rounded border border-emerald-800/50 bg-emerald-950/20 p-4">
-      <div className="flex items-baseline justify-between">
-        <p className="text-sm">
-          mining for <span className="font-bold text-white">{props.name}</span>
+    <div className="rounded-2xl border-2 border-primary/40 bg-primary/8 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="flex items-center gap-1.5 text-sm">
+          <Pickaxe className="size-4 shrink-0 text-primary" />
+          mining for <span className="font-bold">{props.name}</span>
         </p>
-        <button onClick={props.onStop} className="rounded border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-800">
+        <button
+          onClick={props.onStop}
+          className="shrink-0 cursor-pointer rounded-full border border-border px-3 py-1 text-xs font-medium transition-colors hover:bg-muted"
+        >
           stop
         </button>
       </div>
@@ -22,7 +27,7 @@ export function MiningPanel(props: {
         <StatTile size="sm" label="accepted" value={String(props.accepted)} />
         <StatTile size="sm" label="rejected" value={String(props.rejected)} />
       </div>
-      <div className="mt-4 space-y-3 text-xs text-zinc-400">
+      <div className="mt-4 space-y-3 text-xs text-muted-foreground">
         <label className="block">
           threads: {props.threads} of {cores}
           <input type="range" min={1} max={cores} value={props.threads}
@@ -37,4 +42,3 @@ export function MiningPanel(props: {
     </div>
   );
 }
-

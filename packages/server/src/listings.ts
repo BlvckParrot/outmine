@@ -215,8 +215,8 @@ function boardFilter(query: BoardQuery) {
   };
 }
 
-/** Rows only. This is the hub's path, run every couple of seconds for the broadcast,
- *  so it does not pay for a COUNT that nobody reads. */
+/** Rows only. Paired with `countBoard` where the count is wanted, so neither path
+ *  pays for work it does not use. */
 export function listBoard(query: BoardQuery = {}): Listing[] {
   const { visible, where, params } = boardFilter(query);
   const order = visible === 1 ? ORDER.board : ORDER.queue;
@@ -249,14 +249,19 @@ export function listBoard(query: BoardQuery = {}): Listing[] {
   ).all(page) as Listing[];
 }
 
-/** Rows plus how many matched the filter, which is what tells the client whether
- *  another page exists. The API path; the hub does not need it. */
-export function searchBoard(query: BoardQuery = {}): BoardPage {
+/** How many listings match a filter. An index-only count over the same WHERE the
+ *  rows use, which is what tells a client whether another page exists. */
+export function countBoard(query: BoardQuery = {}): number {
   const { where, params } = boardFilter(query);
   const { n } = db.query(
     `SELECT COUNT(*) AS n FROM listings l WHERE ${where}`,
   ).get(params) as { n: number };
-  return { rows: listBoard(query), total: n };
+  return n;
+}
+
+/** Rows plus the count, for the API, which answers both in one response. */
+export function searchBoard(query: BoardQuery = {}): BoardPage {
+  return { rows: listBoard(query), total: countBoard(query) };
 }
 
 /** Where a listing sits on the all-time board. */

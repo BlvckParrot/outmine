@@ -1,9 +1,11 @@
-// Layout: consent, the mining panel, and whichever page the URL names.
+// Layout: the header, consent, the mining panel, and whichever page the URL names.
 //
 // The socket and the worker pool are in useMiner, above the router, because they have
 // to survive navigation.
 import { useState } from "react";
 import { ConsentBanner } from "./components/ConsentBanner";
+import { Footer } from "./components/Footer";
+import { Header } from "./components/Header";
 import { MiningPanel } from "./components/MiningPanel";
 import { ResumePanel } from "./components/ResumePanel";
 import { useMiner } from "./miner-session";
@@ -13,7 +15,7 @@ import { Home } from "./pages/Home";
 import { Listing } from "./pages/Listing";
 import { Rules } from "./pages/Rules";
 import { Stats } from "./pages/Stats";
-import { linkProps, usePath } from "./router";
+import { usePath } from "./router";
 import { SessionContext } from "./session";
 import { hasConsented, lastListing, rememberConsent, rememberListing } from "./storage";
 
@@ -46,53 +48,43 @@ export default function App() {
 
   return (
     <SessionContext.Provider value={{ board, consented, accept, mineFor, startMining: start }}>
-      <div className="min-h-screen text-zinc-200 font-mono">
-        <div className="mx-auto max-w-3xl px-4 py-10">
-          <header className="mb-8">
-            <a {...linkProps("/")} className="text-3xl font-bold text-white">outmine</a>
-            <p className="mt-2 text-zinc-400">
-              A leaderboard you cannot buy. Rank is paid in CPU time — pick a listing and mine for it.
-            </p>
-            <p className="mt-3 text-xs text-zinc-500">
-              {board.online} online · {board.mining} mining · {miner.status}
-            </p>
-            <nav className="mt-3 flex gap-4 text-xs text-zinc-600">
-              <a {...linkProps("/about")} className="hover:text-zinc-300">about</a>
-              <a {...linkProps("/rules")} className="hover:text-zinc-300">rules</a>
-              <a {...linkProps("/faq")} className="hover:text-zinc-300">faq</a>
-              <a {...linkProps("/stats")} className="hover:text-zinc-300">stats</a>
-            </nav>
-          </header>
+      <div className="flex min-h-screen flex-col font-sans">
+        <Header path={path} />
 
-          {!consented && <ConsentBanner onAccept={accept} />}
+        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 pt-4 pb-16">
+          <div className="mb-6 space-y-3 empty:mb-0">
+            {!consented && <ConsentBanner onAccept={accept} />}
 
-          {consented && resume && (
-            <ResumePanel
-              name={resume.name}
-              onResume={() => start(resume.id)}
-              onDismiss={() => {
-                setResumable(null);
-                rememberListing(null);
-              }}
-            />
-          )}
+            {consented && resume && (
+              <ResumePanel
+                name={resume.name}
+                onResume={() => start(resume.id)}
+                onDismiss={() => {
+                  setResumable(null);
+                  rememberListing(null);
+                }}
+              />
+            )}
 
-          {consented && mineFor && (
-            <MiningPanel
-              name={mining?.name ?? mineFor}
-              hashrate={miner.hashrate}
-              accepted={miner.accepted}
-              rejected={miner.rejected}
-              threads={miner.threads}
-              setThreads={miner.setThreads}
-              throttle={miner.throttle}
-              setThrottle={miner.setThrottle}
-              onStop={miner.stop}
-            />
-          )}
+            {consented && mineFor && (
+              <MiningPanel
+                name={mining?.name ?? mineFor}
+                hashrate={miner.hashrate}
+                accepted={miner.accepted}
+                rejected={miner.rejected}
+                threads={miner.threads}
+                setThreads={miner.setThreads}
+                throttle={miner.throttle}
+                setThrottle={miner.setThrottle}
+                onStop={miner.stop}
+              />
+            )}
+          </div>
 
           <Page path={path} />
         </div>
+
+        <Footer />
       </div>
     </SessionContext.Provider>
   );

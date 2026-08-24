@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { BoardEntry, BoardPageResponse } from "@outmine/protocol";
 import { usePolled } from "../api";
-import { BoardRow, PendingRow } from "../components/BoardRow";
-import { SubmitForm } from "../components/SubmitForm";
+import { Activity } from "../components/Activity";
+import { BoardRow, PendingRow, RankDivider } from "../components/BoardRow";
+import { Hero } from "../components/Hero";
 import { Trending } from "../components/Trending";
+import { Card } from "../components/ui";
 import { useSession } from "../session";
 
 type Tab = "all" | "24h";
@@ -14,6 +17,10 @@ type View = {
   total: number;
   limit: number;
 };
+
+/** Where the board is cut into "the podium" and "the rest". Only dividers that fall
+ *  inside the current page are drawn. */
+const DIVIDERS = [3, 10, 20];
 
 export function Home() {
   const { board, mineFor, startMining, consented, accept } = useSession();
@@ -47,21 +54,29 @@ export function Home() {
   const page = usePolled<BoardPageResponse>(path, 10_000);
 
   const view: View = live
-    ? { entries: board.entries, pending: board.pending, total: board.entries.length, limit: board.entries.length }
+    ? { entries: board.entries, pending: board.pending, total: board.total, limit: board.limit }
     : page
       ? { entries: page.entries, pending: page.pending, total: page.total, limit: page.limit }
       : { entries: [], pending: [], total: 0, limit: 1 };
 
   const mine = (id: string) => (consented ? startMining(id) : accept());
-  const hasNext = offset + view.entries.length < view.total;
+  const limit = Math.max(1, view.limit);
+  const pageCount = Math.max(1, Math.ceil(view.total / limit));
+  const current = Math.floor(offset / limit);
+  // Podium styling and the TOP-N dividers only make sense on an actual ranking.
+  const ranked = !q;
 
   return (
     <>
-      <Trending />
+      <Hero />
 
-      <section className="mt-8">
+      <div className="mb-6 grid grid-cols-1 items-stretch gap-4 md:grid-cols-2">
+        <Trending />
+        <Activity />
+      </div>
+
+      <section id="board">
         <div className="mb-3 flex flex-wrap items-center gap-3">
-          <h2 className="text-sm uppercase tracking-widest text-zinc-500">Board</h2>
           <div className="flex gap-1 text-xs">
             <TabButton active={tab === "all"} onClick={() => { setTab("all"); setOffset(0); }}>
               all time
@@ -76,55 +91,55 @@ export function Home() {
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             placeholder="search"
-            className="ml-auto w-40 rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs"
+            className="ml-auto h-8 w-40 rounded-full border border-input bg-card px-3 text-xs outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary"
           />
         </div>
 
         {view.entries.length === 0 && (
-          <p className="rounded border border-zinc-800 p-6 text-sm text-zinc-500">
-            {q ? `Nothing matches "${q}".` : "Nothing on the board yet. A listing appears once someone has mined for it."}
-          </p>
+          <Card className="p-6 text-sm text-muted-foreground">
+            {q
+              ? `Nothing matches "${q}".`
+              : "Nothing on the board yet. A listing appears once someone has mined for it."}
+          </Card>
         )}
 
-        <ol className="space-y-2">
-          {view.entries.map((entry, i) => (
-            <BoardRow
-              key={entry.id}
-              entry={entry}
-              rank={offset + i + 1}
-              mining={mineFor === entry.id}
-              onMine={() => mine(entry.id)}
-            />
-          ))}
+        <ol>
+          {view.entries.flatMap((entry, i) => {
+            const rank = offset + i + 1;
+            // A search result is the Nth match, not the Nth on the board, so the first
+            // hit must not get the leader's gold card. The 24h tab is a real ranking.
+            const divider = ranked && DIVIDERS.includes(rank - 1);
+            const row = (
+              <BoardRow
+                key={entry.id}
+                entry={entry}
+                rank={ranked ? rank : null}
+                podium={ranked && rank <= 3}
+                topOfBlock={divider || i === 0}
+                mining={mineFor === entry.id}
+                onMine={() => mine(entry.id)}
+              />
+            );
+            return divider ? [<RankDivider key={`d${rank}`} after={rank - 1} />, row] : [row];
+          })}
         </ol>
 
-        {(offset > 0 || hasNext) && (
-          <div className="mt-3 flex items-center gap-3 text-xs text-zinc-500">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - view.limit))}
-              className="rounded border border-zinc-800 px-3 py-1 hover:border-zinc-700 disabled:opacity-30"
-            >
-              previous
-            </button>
-            <button
-              disabled={!hasNext}
-              onClick={() => setOffset(offset + view.entries.length)}
-              className="rounded border border-zinc-800 px-3 py-1 hover:border-zinc-700 disabled:opacity-30"
-            >
-              next
-            </button>
-            <span>
-              {offset + 1}–{offset + view.entries.length} of {view.total}
-            </span>
-          </div>
+        {pageCount > 1 && (
+          <Pagination
+            current={current}
+            pageCount={pageCount}
+            onGo={(p) => setOffset(p * limit)}
+            from={offset + 1}
+            to={offset + view.entries.length}
+            total={view.total}
+          />
         )}
       </section>
 
       {view.pending.length > 0 && (
-        <section className="mt-8">
-          <h2 className="mb-3 text-sm uppercase tracking-widest text-zinc-500">Waiting for hashes</h2>
-          <p className="mb-3 text-xs text-zinc-500">
+        <section className="mt-10">
+          <h2 className="mb-1 text-sm font-semibold tracking-[-0.02em]">Waiting for hashes</h2>
+          <p className="mb-3 text-xs text-muted-foreground">
             These are not on the board yet. Mine {board.threshold} shares for one and it joins.
           </p>
           <ul className="space-y-2">
@@ -140,21 +155,6 @@ export function Home() {
           </ul>
         </section>
       )}
-
-      <SubmitForm />
-
-      {board.feed.length > 0 && (
-        <section className="mt-8">
-          <h2 className="mb-3 text-sm uppercase tracking-widest text-zinc-500">Activity</h2>
-          <ul className="space-y-1 text-xs text-zinc-500">
-            {board.feed.slice().reverse().map((f, i) => (
-              <li key={i}>
-                <span className="text-zinc-700">{new Date(f.ts).toLocaleTimeString()}</span> {f.text}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </>
   );
 }
@@ -163,7 +163,80 @@ function TabButton(props: { active: boolean; onClick: () => void; children: Reac
   return (
     <button
       onClick={props.onClick}
-      className={`rounded px-2 py-1 ${props.active ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"}`}
+      className={`cursor-pointer rounded-full px-3 py-1 font-medium transition-colors ${
+        props.active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+/** First, last, and a window around the current page. Fifty listings a page means
+ *  fourteen pages at outbid's size, which is too many to list in full on a phone. */
+function pageNumbers(current: number, count: number): (number | "gap")[] {
+  const wanted = new Set([0, count - 1, current - 1, current, current + 1]);
+  const shown = [...wanted].filter((p) => p >= 0 && p < count).sort((a, b) => a - b);
+  return shown.flatMap((p, i) => {
+    const missing = i === 0 ? 0 : p - shown[i - 1]! - 1;
+    // An ellipsis standing in for a single page is wider than the page it hides.
+    if (missing === 1) return [p - 1, p];
+    return missing > 1 ? ["gap" as const, p] : [p];
+  });
+}
+
+function Pagination(props: {
+  current: number; pageCount: number; onGo: (page: number) => void;
+  from: number; to: number; total: number;
+}) {
+  const step = (delta: number) =>
+    props.onGo(Math.min(props.pageCount - 1, Math.max(0, props.current + delta)));
+
+  return (
+    <div className="mt-6 flex flex-col items-center gap-1.5">
+      <div className="flex items-center gap-1">
+        <PageButton onClick={() => step(-1)} disabled={props.current === 0} label="Previous page">
+          <ChevronLeft className="size-4" />
+        </PageButton>
+        {pageNumbers(props.current, props.pageCount).map((p, i) =>
+          p === "gap" ? (
+            <span key={`gap${i}`} className="px-1 text-sm text-muted-foreground">…</span>
+          ) : (
+            <PageButton key={p} onClick={() => props.onGo(p)} active={p === props.current}>
+              {p + 1}
+            </PageButton>
+          ),
+        )}
+        <PageButton
+          onClick={() => step(1)}
+          disabled={props.current >= props.pageCount - 1}
+          label="Next page"
+        >
+          <ChevronRight className="size-4" />
+        </PageButton>
+      </div>
+      <p className="font-mono text-xs tabular-nums text-muted-foreground">
+        {props.from} – {props.to} of {props.total}
+      </p>
+    </div>
+  );
+}
+
+function PageButton(props: {
+  onClick: () => void; children: React.ReactNode;
+  active?: boolean; disabled?: boolean; label?: string;
+}) {
+  return (
+    <button
+      onClick={props.onClick}
+      disabled={props.disabled}
+      aria-label={props.label}
+      aria-current={props.active ? "page" : undefined}
+      className={`grid size-8 cursor-pointer place-items-center rounded-full text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
+        props.active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
     >
       {props.children}
     </button>

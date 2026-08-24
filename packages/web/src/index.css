@@ -1,4 +1,100 @@
 @import "tailwindcss";
 
-:root { color-scheme: dark; }
-body { background: #0a0a0b; }
+/* Tailwind v4 defaults to prefers-color-scheme; this project stores an explicit
+   choice, so the variant follows a class on <html> that index.html sets before
+   the first paint. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Shipped rather than fetched from a CDN: the container runs without outbound
+   network, and a third party has no business seeing who opened the page.
+   latin-ext is listed separately so it only downloads for a listing name that
+   actually needs it. */
+@font-face {
+  font-family: "DM Sans"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url(/fonts/dm-sans-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "DM Sans"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url(/fonts/dm-sans-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url(/fonts/jetbrains-mono-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url(/fonts/jetbrains-mono-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* One accent, warm neutrals around it. Gold is a light colour, so unlike a coral
+   or an emerald it needs dark text on top - hence --primary-foreground flipping
+   between the themes while every other pair keeps its direction. */
+:root {
+  --background: #fffcf5;
+  --foreground: #2a2018;
+  --card: #ffffff;
+  --card-foreground: #2a2018;
+  --muted: #f5efe2;
+  --muted-foreground: #6b5c47;
+  --border: #e8dcc4;
+  --input: #e8dcc4;
+  --primary: #9c660e;
+  --primary-foreground: #ffffff;
+  --live: #1f7530;
+  --destructive: #c0362a;
+  --shadow-card: 0 12px 50px rgb(42 32 24 / 0.07);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #14100c;
+  --foreground: #f7f2e8;
+  --card: #1e1813;
+  --card-foreground: #f7f2e8;
+  --muted: #2a221a;
+  --muted-foreground: #a89880;
+  --border: #ffffff1a;
+  --input: #ffffff26;
+  --primary: #e0a53a;
+  --primary-foreground: #1a1208;
+  --live: #4fbe62;
+  --destructive: #ff6b5e;
+  --shadow-card: 0 12px 50px rgb(0 0 0 / 0.35);
+  color-scheme: dark;
+}
+
+/* inline, so the utilities compile to var(--background) rather than to the value
+   read at build time. Without it .dark would have nothing to override. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-live: var(--live);
+  --color-destructive: var(--destructive);
+
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 0.875rem;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The two range inputs in the mining panel are the only native controls with a
+   colour of their own. */
+input[type="range"] { accent-color: var(--primary); }

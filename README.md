@@ -74,6 +74,33 @@ looks right in development and is blank in production.
 Caddy the hop to the app is plain http, so a URL derived from the request would
 advertise the card over http and the preview would be dropped.
 
+## The look
+
+The layout is outbid.lol's, deliberately: a status pill, a headline that names what
+the top costs, one field to claim a spot, trending and activity side by side, then a
+board whose first three places are cards and whose rest is a table. It is a shape
+people have already learned, and the argument here is the same one - rank is for sale,
+this is the price.
+
+The palette is not theirs. One accent, gold, over warm neutrals, in a light theme and
+a dark one that a button in the header switches between. Gold is a light colour, which
+is the one place the token set differs in structure from the usual: `--primary-foreground`
+is white on the light theme and near-black on the dark one, because dark text on gold
+is what reads.
+
+Every pair the design puts together is measured rather than eyeballed. The first light
+gold picked, `#b07714`, gave 3.8:1 under a white button label and had to go darker.
+
+The stored choice is applied by an inline script in `index.html` before the first
+paint; a class set by React arrives one frame too late and the page flashes white.
+That script sits after the `<!--og-->` marker, which has to stay the first thing in
+`<head>`.
+
+Two faces are served from `public/fonts`, DM Sans and JetBrains Mono, latin and
+latin-ext apiece. Self-hosted rather than from Google's CDN: the container has no
+outbound network, and who opened the page is not a third party's business. Numbers are
+the mono - scores, hashrates, ranks - and everything else is the sans.
+
 ## Pool connections
 
 Miners share pool sockets, 16 to a socket. Neither extreme works: one socket per miner
@@ -173,13 +200,17 @@ policy below.
 packages/protocol/   the WebSocket contract, imported by both server and browser
 packages/wasm/       MinotaurX hasher, compiled from cpuminer-multi with emcc
 packages/web/
+  index.css          the two palettes, the four faces, the Tailwind theme
   App.tsx            layout: consent, the mining panel, the page the URL names
   miner-session.ts   useMiner: the socket, the worker pool, the counters
+  theme.ts           light or dark; index.html applies it before the first paint
   router.ts          a dozen lines of pushState; six paths do not need a dependency
   api.ts             where the API is, and usePolled for the pages that read from it
   session.ts         what pages read from the live connection
+  storage.ts         consent, last listing, theme - every read guarded
   pages/             home, listing, stats, about, rules, faq
-  components/        board rows, consent, mining panel, submit form, trending, ui
+  components/        header, hero, board rows, trending, activity, panels, ui
+  public/fonts/      DM Sans and JetBrains Mono, latin and latin-ext
   miner.worker.ts    the hashing worker
 packages/server/
   config.ts          every tunable, validated at startup
@@ -198,9 +229,15 @@ scripts/             backup, browser check, algorithm ranking
 ```
 
 Bun workspaces. Still one deployed process and one SQLite file; two runtime
-dependencies (`hono` and `@resvg/resvg-js`, the latter only to turn a share card into
-a PNG). The split is about keeping the boundaries honest — the browser cannot reach
-into server code, and the shared contract is a package rather than a relative path.
+dependencies on the server (`hono` and `@resvg/resvg-js`, the latter only to turn a
+share card into a PNG) and one in the browser (`lucide-react`, tree-shaken to the eight
+icons used). The split is about keeping the boundaries honest — the browser cannot
+reach into server code, and the shared contract is a package rather than a relative
+path.
+
+First load is 72 kB of JavaScript and 6 kB of CSS, both gzipped, plus 68 kB of fonts;
+latin-ext adds 29 kB and only for a page that needs it. The WASM miner is another
+175 kB and downloads when somebody presses a button, not before.
 
 Two rules hold this together. **Every SQL statement lives in `listings.ts`**, so the
 ordering of the board, its tie-break and the rank a badge prints cannot drift apart -

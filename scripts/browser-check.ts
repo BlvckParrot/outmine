@@ -42,7 +42,9 @@ while (Date.now() - startedAt < DEADLINE_MS) {
   const hs = await readStat("hashrate");
   const acc = await readStat("accepted");
   const rej = await readStat("rejected");
-  const header = (await page.locator("header p").last().textContent())?.trim();
+  // The live counters moved out of a paragraph in the header and into the status
+  // pill above the headline; it is the only link on the page that says "online".
+  const header = (await page.getByRole("link", { name: /online/ }).first().textContent())?.trim();
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(`  t+${elapsed}s  hashrate=${hs}  accepted=${acc}  rejected=${rej}  header="${header}"`);
   if (Number(acc) > 0) break;
@@ -59,7 +61,7 @@ console.log(`miners shown on a row: ${minersShown > 0}`);
 
 // Navigating must not stop mining. The socket and the workers live in the shell, so a
 // page that owned them - the obvious structure - would silently kill the miner here.
-await page.getByRole("link", { name: "about", exact: true }).click();
+await page.getByRole("link", { name: "About", exact: true }).click();
 await page.waitForTimeout(4000);
 const onAbout = page.url().endsWith("/about");
 const stillMining = await page.getByText(/mining for/).isVisible();

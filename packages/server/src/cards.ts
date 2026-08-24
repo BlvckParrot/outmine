@@ -15,6 +15,15 @@ const FONT_FAMILY = "JetBrains Mono";
 /** JetBrains Mono advances 600/1000 of an em per glyph. Every glyph, which is the
  *  point of a monospace face and the reason a badge can be laid out with arithmetic
  *  instead of a text measuring pass. */
+/** The share surfaces stay dark in both site themes: a card lands in someone else's
+ *  feed and a badge in someone else's README, neither of which we get to theme. Dark
+ *  with gold is the site's night side, and it reads on white and on black alike. */
+const INK = "#14100c";
+const GOLD = "#e0a53a";
+const PAPER = "#f7f2e8";
+const DIM = "#a89880";
+const FAINT = "#6b5c47";
+
 const ADVANCE = 0.6;
 const textWidth = (text: string, size: number) => Math.ceil(text.length * size * ADVANCE);
 
@@ -46,12 +55,12 @@ export function badgeSvg(listing: Pick<ListingDetail, "rank" | "score">): string
   const total = labelWidth + valueWidth;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${total}" height="${BADGE_HEIGHT}" role="img" aria-label="${escapeXml(`${label}: ${value}`)}">
-  <rect width="${total}" height="${BADGE_HEIGHT}" rx="3" fill="#18181b"/>
-  <rect x="${labelWidth}" width="${valueWidth}" height="${BADGE_HEIGHT}" rx="3" fill="#059669"/>
-  <rect x="${labelWidth}" width="4" height="${BADGE_HEIGHT}" fill="#059669"/>
+  <rect width="${total}" height="${BADGE_HEIGHT}" rx="3" fill="${INK}"/>
+  <rect x="${labelWidth}" width="${valueWidth}" height="${BADGE_HEIGHT}" rx="3" fill="${GOLD}"/>
+  <rect x="${labelWidth}" width="4" height="${BADGE_HEIGHT}" fill="${GOLD}"/>
   <g font-family="${FONT_FAMILY},monospace" font-size="${BADGE_FONT}">
-    <text x="${BADGE_PADDING}" y="14" fill="#a1a1aa">${escapeXml(label)}</text>
-    <text x="${labelWidth + BADGE_PADDING}" y="14" fill="#ffffff" font-weight="bold">${escapeXml(value)}</text>
+    <text x="${BADGE_PADDING}" y="14" fill="${DIM}">${escapeXml(label)}</text>
+    <text x="${labelWidth + BADGE_PADDING}" y="14" fill="${INK}" font-weight="bold">${escapeXml(value)}</text>
   </g>
 </svg>`;
 }
@@ -75,15 +84,15 @@ export function cardSvg(listing: ListingDetail): string {
     : `${listing.shares} of ${config.board.visibilityThreshold} shares needed`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}">
-  <rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="#0a0a0b"/>
-  <rect x="0" y="0" width="${CARD_WIDTH}" height="6" fill="#059669"/>
+  <rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${INK}"/>
+  <rect x="0" y="0" width="${CARD_WIDTH}" height="6" fill="${GOLD}"/>
   <g font-family="${FONT_FAMILY},monospace">
-    <text x="72" y="112" font-size="28" fill="#52525b">outmine</text>
-    <text x="72" y="250" font-size="${headline.size}" font-weight="bold" fill="#10b981">${headline.text}</text>
-    <text x="72" y="360" font-size="60" font-weight="bold" fill="#ffffff">${name}</text>
-    <text x="72" y="412" font-size="28" fill="#71717a">${tagline}</text>
-    <text x="72" y="516" font-size="34" fill="#d4d4d8">${footing}</text>
-    <text x="72" y="566" font-size="24" fill="#52525b">a leaderboard paid for in CPU time, not money</text>
+    <text x="72" y="112" font-size="28" fill="${FAINT}">outmine</text>
+    <text x="72" y="250" font-size="${headline.size}" font-weight="bold" fill="${GOLD}">${headline.text}</text>
+    <text x="72" y="360" font-size="60" font-weight="bold" fill="${PAPER}">${name}</text>
+    <text x="72" y="412" font-size="28" fill="${DIM}">${tagline}</text>
+    <text x="72" y="516" font-size="34" fill="${PAPER}">${footing}</text>
+    <text x="72" y="566" font-size="24" fill="${FAINT}">a leaderboard paid for in CPU time, not money</text>
   </g>
 </svg>`;
 }
@@ -126,17 +135,17 @@ export function render(svg: string): Buffer {
  *  board, so a link to the site says what the site is rather than repeating its name. */
 export function homeCardSvg(top: { name: string; score: number }[]): string {
   const rows = top.slice(0, 3).map((entry, i) => `
-    <text x="72" y="${330 + i * 62}" font-size="40" fill="${i === 0 ? "#ffffff" : "#a1a1aa"}">${
+    <text x="72" y="${330 + i * 62}" font-size="40" fill="${i === 0 ? PAPER : DIM}">${
       escapeXml(`${i + 1}. ${truncate(entry.name, 22)}`)
     }</text>
-    <text x="1128" y="${330 + i * 62}" font-size="40" text-anchor="end" fill="#10b981">${points(entry.score)}</text>`).join("");
+    <text x="1128" y="${330 + i * 62}" font-size="40" text-anchor="end" fill="${GOLD}">${points(entry.score)}</text>`).join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}">
-  <rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="#0a0a0b"/>
-  <rect x="0" y="0" width="${CARD_WIDTH}" height="6" fill="#059669"/>
+  <rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${INK}"/>
+  <rect x="0" y="0" width="${CARD_WIDTH}" height="6" fill="${GOLD}"/>
   <g font-family="${FONT_FAMILY},monospace">
-    <text x="72" y="140" font-size="72" font-weight="bold" fill="#ffffff">outmine</text>
-    <text x="72" y="200" font-size="30" fill="#71717a">a leaderboard you cannot buy — rank is paid in CPU time</text>
+    <text x="72" y="140" font-size="72" font-weight="bold" fill="${PAPER}">outmine</text>
+    <text x="72" y="200" font-size="30" fill="${DIM}">a leaderboard you cannot buy — rank is paid in CPU time</text>
     ${rows}
   </g>
 </svg>`;

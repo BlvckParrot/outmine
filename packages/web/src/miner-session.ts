@@ -8,7 +8,9 @@ import { wsUrl } from "./api";
 import { Miner } from "./mining";
 import { rememberListing } from "./storage";
 
-const EMPTY: BoardSnapshot = { entries: [], pending: [], threshold: 1, online: 0, mining: 0, feed: [] };
+const EMPTY: BoardSnapshot = {
+  entries: [], pending: [], total: 0, limit: 1, threshold: 1, online: 0, mining: 0, feed: [],
+};
 
 const RECONNECT_MS = 2_000;
 const HASHRATE_REPORT_MS = 3_000;

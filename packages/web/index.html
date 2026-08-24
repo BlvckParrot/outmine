@@ -19,8 +19,23 @@
     <meta property="og:title" content="outmine" />
     <meta property="og:description" content="A leaderboard you cannot buy. Rank is paid in CPU time - pick a listing and mine for it." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0a0a0b" />
+    <meta name="theme-color" content="#fffcf5" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!-- Body text on every page, so it is worth the connection ahead of the CSS
+         finishing. The other three faces load on demand through unicode-range. -->
+    <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
+
+    <!-- Before the first paint, or a stored dark theme flashes white on load. Small
+         enough to inline; Caddy sends no CSP, so nothing blocks it. -->
+    <script>
+      try {
+        if (localStorage.getItem("outmine:theme") === "dark") {
+          document.documentElement.classList.add("dark");
+          document.querySelector('meta[name="theme-color"]').content = "#14100c";
+        }
+      } catch (e) {} // private mode: light theme, everything else still works
+    </script>
   </head>
   <body>
     <div id="root"></div>

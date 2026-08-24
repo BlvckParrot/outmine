@@ -1,8 +1,22 @@
 import { useState } from "react";
+import { Pickaxe } from "lucide-react";
 import { apiUrl } from "../api";
 
+/** Anything starting with @ is a handle; everything else is a domain. The old select
+ *  asked the visitor to classify their own URL, which is a question the string already
+ *  answers. The server still validates the kind it is sent. */
+const kindOf = (target: string) => (target.trim().startsWith("@") ? "handle" : "domain");
+
+/** "orynth.dev" -> "Orynth", "@levelsio" -> "levelsio". Only a default: the name field
+ *  appears as soon as there is a target, so it can always be overridden. */
+function suggestName(target: string): string {
+  const t = target.trim().replace(/^https?:\/\//, "").replace(/^www\./, "");
+  if (t.startsWith("@")) return t.slice(1);
+  const label = t.split("/")[0]!.split(".")[0] ?? "";
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export function SubmitForm() {
-  const [kind, setKind] = useState<"domain" | "handle">("domain");
   const [target, setTarget] = useState("");
   const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
@@ -13,7 +27,12 @@ export function SubmitForm() {
     const res = await fetch(apiUrl("/api/listings"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind, target, name, tagline }),
+      body: JSON.stringify({
+        kind: kindOf(target),
+        target,
+        name: name.trim() || suggestName(target),
+        tagline,
+      }),
     });
     const data = await res.json();
     setResult(
@@ -21,37 +40,61 @@ export function SubmitForm() {
         ? { ok: true, text: `Listed. Save this edit token, it is shown once: ${data.editToken}` }
         : { ok: false, text: data.error },
     );
-    if (res.ok) setTarget("");
+    if (res.ok) {
+      setTarget("");
+      setName("");
+      setTagline("");
+    }
   };
 
   return (
-    <section className="mt-10">
-      <h2 className="mb-3 text-sm uppercase tracking-widest text-zinc-500">Add a listing</h2>
-      <form onSubmit={submit} className="space-y-2 rounded border border-zinc-800 p-4">
-        <div className="flex gap-2">
-          <select value={kind} onChange={(e) => setKind(e.target.value as "domain" | "handle")}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm">
-            <option value="domain">domain</option>
-            <option value="handle">@handle</option>
-          </select>
-          <input value={target} onChange={(e) => setTarget(e.target.value)} required
-            placeholder={kind === "domain" ? "example.com" : "@yourhandle"}
-            className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
+    <form onSubmit={submit} className="mx-auto mt-5 flex w-full max-w-2xl flex-col gap-2">
+      <div className="flex flex-col gap-2 md:flex-row">
+        <div className="relative flex-1">
+          <Pickaxe className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            required
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="your domain or @handle"
+            className="h-11 w-full min-w-0 rounded-xl border border-input bg-card pr-3 pl-10 text-base outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary"
+          />
         </div>
-        <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="name"
-          className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
-        <input value={tagline} onChange={(e) => setTagline(e.target.value)} placeholder="one line about it"
-          className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
-        <button className="rounded bg-zinc-100 px-3 py-1.5 text-sm font-semibold text-black hover:bg-white">
-          add
+        <button className="h-11 shrink-0 cursor-pointer rounded-full bg-primary px-5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/85 md:w-auto">
+          Claim a spot
         </button>
-        <p className="text-xs text-zinc-500">
-          Free to add. It appears on the board once enough hashes have been mined for it — that is the spam filter.
+      </div>
+
+      {/* Only once there is something to name. Three empty fields under the headline
+          would read as a form to fill in rather than as one thing to type. */}
+      {target.trim() && (
+        <div className="flex flex-col gap-2 md:flex-row">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={suggestName(target)}
+            className="h-9 w-full min-w-0 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary md:w-44"
+          />
+          <input
+            value={tagline}
+            onChange={(e) => setTagline(e.target.value)}
+            placeholder="one line about it"
+            className="h-9 w-full min-w-0 flex-1 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary"
+          />
+        </div>
+      )}
+
+      <p className="text-center text-xs leading-relaxed text-muted-foreground">
+        Free to add. It reaches the board once enough hashes have been mined for it —
+        that is the spam filter.
+      </p>
+      {result && (
+        <p className={`text-center text-xs break-all ${result.ok ? "text-primary" : "text-destructive"}`}>
+          {result.text}
         </p>
-        {result && (
-          <p className={`text-xs break-all ${result.ok ? "text-emerald-400" : "text-red-400"}`}>{result.text}</p>
-        )}
-      </form>
-    </section>
+      )}
+    </form>
   );
 }

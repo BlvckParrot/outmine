@@ -6,7 +6,7 @@ import type { ServerWebSocket } from "bun";
 import type { BoardSnapshot, ClientMessage, ServerMessage } from "@outmine/protocol";
 import { buildHeader, bytesToHex, diffToTarget, type StratumJob } from "./blockheader";
 import { config } from "./config";
-import { creditShares, listBoard, listingExists } from "./listings";
+import { countBoard, creditShares, listBoard, listingExists } from "./listings";
 import { log, makeThrottledLog } from "./log";
 import { StratumClient } from "./stratum";
 
@@ -321,6 +321,10 @@ function boardSnapshot(): BoardSnapshot {
   return {
     entries: listBoard().map(live).sort((a, b) => b.score - a.score),
     pending: listBoard({ visible: 0 }).map(live),
+    // The rows above are the first page. The count is what lets a visitor who has
+    // touched no filter reach the second one.
+    total: countBoard(),
+    limit: config.board.entries,
     threshold: config.board.visibilityThreshold,
     online: clients.size,
     mining: miningCount(),

@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { Gem } from "lucide-react";
 import type { ListingDetail } from "@outmine/protocol";
 import { apiUrl, usePolled } from "../api";
-import { Avatar, StatTile } from "../components/ui";
+import { Avatar, Card, StatTile } from "../components/ui";
 import { fmt, points } from "../format";
 import { linkProps } from "../router";
 import { useSession } from "../session";
@@ -19,9 +20,9 @@ export function Listing({ id }: { id: string }) {
 
   if (!listing) {
     return (
-      <p className="mt-8 text-sm text-zinc-500">
+      <p className="mt-8 text-sm text-muted-foreground">
         Loading… if nothing appears, this listing is gone —{" "}
-        <a {...linkProps("/")} className="text-emerald-400 hover:underline">back to the board</a>.
+        <a {...linkProps("/")} className="text-primary hover:underline">back to the board</a>.
       </p>
     );
   }
@@ -35,17 +36,17 @@ export function Listing({ id }: { id: string }) {
     : `${listing.name} needs hashes to reach the outmine board.`;
 
   return (
-    <article className="mt-8">
+    <article>
       <div className="flex items-start gap-4">
         <Avatar entry={listing} size="lg" />
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-bold text-white">{listing.name}</h1>
-          <p className="mt-1 text-sm text-zinc-500">{listing.tagline}</p>
+          <h1 className="truncate text-2xl font-bold tracking-[-0.02em]">{listing.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{listing.tagline}</p>
           <a
             href={apiUrl(`/r/${listing.id}`)}
             rel="sponsored nofollow noopener"
             target="_blank"
-            className="mt-1 inline-block truncate text-xs text-emerald-500 hover:underline"
+            className="mt-1 inline-block truncate text-xs text-primary hover:underline"
           >
             {listing.kind === "handle" ? `@${listing.target}` : listing.target} ↗
           </a>
@@ -53,7 +54,7 @@ export function Listing({ id }: { id: string }) {
         <button
           onClick={() => (consented ? startMining(listing.id) : accept())}
           disabled={mineFor === listing.id}
-          className="shrink-0 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:bg-zinc-700"
+          className="shrink-0 cursor-pointer rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/85 disabled:opacity-50"
         >
           {mineFor === listing.id ? "mining" : "mine for this"}
         </button>
@@ -70,11 +71,11 @@ export function Listing({ id }: { id: string }) {
       </div>
 
       {!listing.visible && (
-        <div className="mt-4 rounded border border-dashed border-zinc-800 p-4 text-sm text-zinc-500">
+        <div className="mt-4 rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground">
           Still short of the board: {shares} of {board.threshold} shares.
-          <div className="mt-2 h-1 w-full overflow-hidden rounded bg-zinc-800">
+          <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full bg-emerald-700"
+              className="h-full bg-primary"
               style={{ width: `${Math.min(100, (shares / board.threshold) * 100)}%` }}
             />
           </div>
@@ -82,13 +83,15 @@ export function Listing({ id }: { id: string }) {
       )}
 
       <section className="mt-8">
-        <h2 className="mb-3 text-sm uppercase tracking-widest text-zinc-500">Share it</h2>
+        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold tracking-[-0.02em]">
+          <Gem className="size-4 text-primary" /> Share it
+        </h2>
         <div className="flex flex-wrap gap-2">
           <a
             href={`https://x.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(pageUrl)}`}
             target="_blank"
             rel="noopener"
-            className="rounded bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-black hover:bg-white"
+            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-bold text-background transition-opacity hover:opacity-85"
           >
             post on X
           </a>
@@ -99,17 +102,16 @@ export function Listing({ id }: { id: string }) {
                 setTimeout(() => setCopied(false), 2000);
               }).catch(() => {/* clipboard is blocked; the snippet is on screen anyway */});
             }}
-            className="rounded border border-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-800"
+            className="cursor-pointer rounded-full border border-border px-4 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
           >
             {copied ? "copied" : "copy badge markdown"}
           </button>
         </div>
         <img src={apiUrl(`/badge/${id}.svg`)} alt="" className="mt-3 h-5" />
-        <pre className="mt-2 overflow-x-auto rounded border border-zinc-800 bg-black/40 p-3 text-[10px] text-zinc-500">
+        <pre className="mt-2 overflow-x-auto rounded-xl bg-muted p-3 font-mono text-[10px] text-muted-foreground">
           {badgeMarkdown}
         </pre>
       </section>
     </article>
   );
 }
-

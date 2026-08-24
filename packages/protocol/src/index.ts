@@ -30,6 +30,12 @@ export type BoardSnapshot = {
   /** Listings that have not cleared the proof-of-work gate yet. They stay visible so
    *  somebody can mine them onto the board; hiding them would make the gate a wall. */
   pending: BoardEntry[];
+  /** Listings on the board in total, not the number in `entries`. The socket only
+   *  ever sends the first page, so without this the client cannot know a second page
+   *  exists and the pager never appears on the default view. */
+  total: number;
+  /** Page size the board is cut into, so the client can turn `total` into pages. */
+  limit: number;
   threshold: number;
   online: number;
   mining: number;
