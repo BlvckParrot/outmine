@@ -5,6 +5,7 @@
 // read them through this context instead.
 import { createContext, useContext } from "react";
 import type { BoardSnapshot } from "@outmine/protocol";
+import type { Owned } from "./storage";
 
 export type Session = {
   board: BoardSnapshot;
@@ -12,6 +13,9 @@ export type Session = {
   accept: () => void;
   mineFor: string | null;
   startMining: (listingId: string) => void;
+  /** A listing this browser just created. The form is deep inside the page and the
+   *  panel that shows it is above the router, so the claim travels through here. */
+  claim: (owned: Owned) => void;
 };
 
 export const SessionContext = createContext<Session | null>(null);

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pickaxe } from "lucide-react";
 import { apiUrl } from "../api";
+import { useSession } from "../session";
 
 /** Anything starting with @ is a handle; everything else is a domain. The old select
  *  asked the visitor to classify their own URL, which is a question the string already
@@ -17,6 +18,7 @@ function suggestName(target: string): string {
 }
 
 export function SubmitForm() {
+  const { claim } = useSession();
   const [target, setTarget] = useState("");
   const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
@@ -35,16 +37,16 @@ export function SubmitForm() {
       }),
     });
     const data = await res.json();
-    setResult(
-      res.ok
-        ? { ok: true, text: `Listed. Save this edit token, it is shown once: ${data.editToken}` }
-        : { ok: false, text: data.error },
-    );
-    if (res.ok) {
-      setTarget("");
-      setName("");
-      setTagline("");
-    }
+    if (!res.ok) return setResult({ ok: false, text: data.error });
+
+    // The token used to be printed here and nowhere else, which made it a random
+    // string under a form. It goes to the panel at the top of the page instead, next
+    // to the listing it belongs to and the button that mines for it.
+    claim({ id: data.listing.id, token: data.editToken });
+    setResult({ ok: true, text: "Listed. It is at the top of this page — mine for it to put it on the board." });
+    setTarget("");
+    setName("");
+    setTagline("");
   };
 
   return (

@@ -38,7 +38,10 @@ export function useMiner(): MinerSession {
   const [accepted, setAccepted] = useState(0);
   const [rejected, setRejected] = useState(0);
   const [threads, setThreads] = useState(() => Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
-  const [throttle, setThrottle] = useState(0.3);
+  // Off by default: someone who pressed "mine for this" asked for the CPU, and a
+  // machine that is already idling at 30% before they touch the slider reads as a
+  // miner that does not work. The slider is right there for a phone or a laptop.
+  const [throttle, setThrottle] = useState(0);
 
   const ws = useRef<WebSocket | null>(null);
   const miner = useRef<Miner | null>(null);

@@ -38,3 +38,23 @@ export const rememberListing = (id: string | null) => write("outmine:listing", i
 export type Theme = "light" | "dark";
 export const storedTheme = (): Theme => (read("outmine:theme") === "dark" ? "dark" : "light");
 export const rememberTheme = (theme: Theme) => write("outmine:theme", theme);
+
+/** A listing created in this browser, with the edit token handed back when it was
+ *  created. The API prints that token exactly once and stores only its hash, so if it
+ *  is not kept here it is gone for good and nothing can prove the listing is yours. */
+export type Owned = { id: string; token: string };
+
+export const ownedListings = (): Owned[] => {
+  try {
+    const parsed = JSON.parse(read("outmine:owned") ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return []; // hand-edited or written by an older shape: start over rather than throw
+  }
+};
+
+export const rememberOwned = (owned: Owned) =>
+  write("outmine:owned", JSON.stringify([owned, ...ownedListings().filter((o) => o.id !== owned.id)]));
+
+export const forgetOwned = (id: string) =>
+  write("outmine:owned", JSON.stringify(ownedListings().filter((o) => o.id !== id)));
