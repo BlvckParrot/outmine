@@ -8,7 +8,7 @@ import {
   buildHeader, bytesToHex, diffToTarget, NONCE_SUBMIT_LITTLE_ENDIAN, type StratumJob,
 } from "./blockheader";
 import { config } from "./config";
-import { countBoard, countHit, creditShares, listBoard, listingExists } from "./listings";
+import { countBoard, countHit, creditShares, listBoard, listingExists, refKeysToday } from "./listings";
 import { log, makeThrottledLog } from "./log";
 import { StratumClient } from "./stratum";
 
@@ -17,7 +17,7 @@ const throttledLog = makeThrottledLog(30_000);
 
 /** Bun needs the socket's data shape up front, but a Client can only be made once the
  *  socket exists, so the slot starts empty and `open` fills it. */
-export type SocketData = { client: Client | null };
+export type SocketData = { client: Client | null; address: string };
 
 export type Client = {
   ws: ServerWebSocket<SocketData>;
@@ -28,16 +28,24 @@ export type Client = {
   extranonce2Index: number;
   /** Self-reported, so clamped and never trusted for anything that scores. */
   hashrate: number;
+  /** Unaccepted submits since the last accepted one. Deliberately not reset by a new
+   *  `mine`: it is the only brake on a client that submits nothing but junk, and one
+   *  that a message could clear would be no brake at all. */
   badSubmits: number;
   messagesThisSecond: number;
   secondStartedAt: number;
+  /** The address this socket came from, kept so the per-address count can be undone
+   *  when it closes. */
+  address: string;
+  lastMineAt: number;
   /** Traffic bookkeeping, per socket. `counted` and `mined` make a visit and a
-   *  conversion count once however many times the browser says them; `lastView` drops a
-   *  repeat of the page already counted, which is the only way a client could inflate
-   *  these numbers within its message rate. */
+   *  conversion count once however many times the browser says them; `seen` holds the
+   *  keys already counted for this socket, which is what stops a client repeating a
+   *  page to inflate the number - and, since every write here is a write to SQLite,
+   *  what bounds how much disk one socket can spend. */
   counted: boolean;
   mined: boolean;
-  lastView: string | null;
+  seen: Set<string>;
 };
 
 type PoolConnection = {
@@ -55,9 +63,14 @@ type PoolConnection = {
   /** Submit request id -> the miner who found it. Without this the credit would land
    *  on whoever happened to be next on the socket. */
   submits: Map<number, Client>;
+  /** Set when the last miner leaves, cleared if one arrives before it fires. */
+  idleTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const clients = new Set<Client>();
+/** Sockets held per address. One entry per address with a live socket, deleted when its
+ *  last one closes, so this never outgrows the client set. */
+const perAddress = new Map<string, number>();
 const connections = new Set<PoolConnection>();
 /** Credited shares not yet written to SQLite, by listing id. */
 const unflushed = new Map<string, { shares: number; diffSum: number }>();
@@ -68,17 +81,29 @@ export const miningCount = () => [...clients].filter((c) => c.listingId).length;
 export const connectionCount = () => connections.size;
 export const poolHealthy = () => [...connections].every((c) => c.stratum.connected);
 
-/** Returns null when the server is already at capacity; the caller closes the socket. */
-export function addClient(ws: ServerWebSocket<SocketData>): Client | null {
+/** Returns null when the server is already at capacity; the caller closes the socket.
+ *
+ *  Two ceilings, and the per-address one is the one that matters: a single global count
+ *  is filled by whoever opens sockets fastest, and every visitor after that is refused
+ *  by a server that is not busy at all. */
+export function addClient(ws: ServerWebSocket<SocketData>, address: string): Client | null {
   if (clients.size >= config.limits.maxClients) {
     throttledLog("client_rejected_at_capacity", { clients: clients.size });
     return null;
   }
+  const held = perAddress.get(address) ?? 0;
+  if (held >= config.limits.maxClientsPerAddress) {
+    throttledLog("client_rejected_per_address", { held });
+    return null;
+  }
+
   const client: Client = {
     ws, listingId: null, conn: null, extranonce2Index: 0,
     hashrate: 0, badSubmits: 0, messagesThisSecond: 0, secondStartedAt: 0,
-    counted: false, mined: false, lastView: null,
+    address, lastMineAt: 0,
+    counted: false, mined: false, seen: new Set(),
   };
+  perAddress.set(address, held + 1);
   clients.add(client);
   send(client, { t: "board", ...boardSnapshot() });
   return client;
@@ -87,6 +112,10 @@ export function addClient(ws: ServerWebSocket<SocketData>): Client | null {
 export function removeClient(client: Client) {
   stopMining(client);
   clients.delete(client);
+
+  const held = (perAddress.get(client.address) ?? 1) - 1;
+  if (held > 0) perAddress.set(client.address, held);
+  else perAddress.delete(client.address);
 }
 
 export function handleMessage(client: Client, raw: string) {
@@ -165,6 +194,51 @@ export function refHost(ref: string | undefined, self: string): string {
  *  PUBLIC_ORIGIN is unset, which is development, where there is nothing to filter. */
 const SELF_HOST = refHost(config.publicOrigin, "");
 
+/** Distinct referrer hosts admitted in a day. */
+const REF_MAX_PER_DAY = 500;
+const REF_OTHER = "(other)";
+
+let refDay = -1;
+let refSeen = new Set<string>();
+
+/** The key a referrer host is counted under.
+ *
+ *  `ref` is the one key here that is neither whitelisted nor checked against a table: a
+ *  host is whatever the visitor's browser sent, and it becomes part of a primary key, so
+ *  an unbounded host is an unbounded table - one permanent row per socket, from a sender
+ *  who only has to connect and name a host nobody has named before.
+ *
+ *  Past the ceiling, further new hosts are counted together under one key rather than
+ *  dropped: the total stays right, only the breakdown stops growing.
+ *
+ *  Exported for its test - the ceiling is the point of it. */
+export function refKey(host: string): string {
+  const day = Math.floor(Date.now() / 86_400_000);
+  if (day !== refDay) {
+    refDay = day;
+    // Seeded from the table, not emptied: a restart would otherwise re-admit a fresh
+    // ceiling's worth of hosts on top of the ones already stored for today.
+    refSeen = new Set(refKeysToday());
+  }
+  if (refSeen.has(host)) return host;
+  if (refSeen.size >= REF_MAX_PER_DAY) return REF_OTHER;
+  refSeen.add(host);
+  return host;
+}
+
+/** Counts a key once per socket. Every count here is a write to SQLite, so this is both
+ *  what keeps the numbers honest - a page said twice is one view - and what bounds the
+ *  disk one socket can spend within its message rate. */
+function countOnce(client: Client, kind: string, key = "") {
+  const seen = `${kind}:${key}`;
+  if (client.seen.has(seen)) return;
+  // A real visitor reads a handful of pages. The cap only matters for a client walking
+  // the whole board to make writes happen.
+  if (client.seen.size >= 100) return;
+  client.seen.add(seen);
+  countHit(kind, key);
+}
+
 function countView(client: Client, msg: { path?: unknown; ref?: unknown; first?: unknown }) {
   const path = String(msg.path ?? "");
 
@@ -174,18 +248,15 @@ function countView(client: Client, msg: { path?: unknown; ref?: unknown; first?:
     client.counted = true;
     countHit("visit");
     const host = refHost(typeof msg.ref === "string" ? msg.ref : undefined, SELF_HOST);
-    if (host) countHit("ref", host);
+    if (host) countHit("ref", refKey(host));
   }
 
-  if (path === client.lastView) return; // the page already counted, said again
-  client.lastView = path;
-
-  countHit("page", pageKey(path));
+  countOnce(client, "page", pageKey(path));
 
   // Checked against the table rather than trusted. The id becomes part of a primary
   // key, so a made-up one is a row that stays there.
   const listing = LISTING_PATH.exec(path)?.[1]?.toLowerCase();
-  if (listing && listingExists(listing)) countHit("listing", listing);
+  if (listing && listingExists(listing)) countOnce(client, "listing", listing);
 }
 
 // --- pool connections ---------------------------------------------------------
@@ -201,6 +272,7 @@ function openConnection(): PoolConnection {
     jobs: new Map(),
     currentJobId: null,
     submits: new Map(),
+    idleTimer: null,
   };
 
   conn.stratum = new StratumClient(
@@ -269,6 +341,13 @@ function joinConnection(client: Client): PoolConnection | null {
     conn = openConnection();
   }
 
+  // Reusing a socket that was about to be closed is the whole point of the grace
+  // period: the miner it is waiting for has arrived.
+  if (conn.idleTimer) {
+    clearTimeout(conn.idleTimer);
+    conn.idleTimer = null;
+  }
+
   client.extranonce2Index = conn.freeSlots.pop()!;
   conn.miners.add(client);
   client.conn = conn;
@@ -284,12 +363,24 @@ function leaveConnection(client: Client) {
   for (const [id, miner] of conn.submits) if (miner === client) conn.submits.delete(id);
   client.conn = null;
 
-  // Nobody left on this socket: close it rather than hold it open against the pool.
-  if (conn.miners.size === 0) {
-    conn.stratum.close();
-    connections.delete(conn);
-    log("pool_closed", { connections: connections.size });
+  // Nobody left on this socket. Held for a grace period rather than closed here: a
+  // visitor switching listings leaves and rejoins in the same tick, and closing on the
+  // spot makes that a fresh connect, subscribe and authorize against the pool. Repeated
+  // fast enough - which one socket can do within its own message rate - that is a
+  // connection flood from our address, and the ban would take every listing's earnings
+  // with it.
+  if (conn.miners.size === 0 && !conn.idleTimer) {
+    conn.idleTimer = setTimeout(() => closeConnection(conn), config.pool.idleConnectionMs);
+    conn.idleTimer.unref?.(); // an idle socket must not hold the process open at exit
   }
+}
+
+function closeConnection(conn: PoolConnection) {
+  conn.idleTimer = null;
+  if (conn.miners.size > 0) return; // someone joined; the timer lost the race
+  conn.stratum.close();
+  connections.delete(conn);
+  log("pool_closed", { connections: connections.size });
 }
 
 const extranonce2Of = (client: Client, conn: PoolConnection) =>
@@ -317,6 +408,13 @@ function broadcastJob(conn: PoolConnection, only?: Client) {
 // --- mining -------------------------------------------------------------------
 
 function startMining(client: Client, listingId: string) {
+  // Before the lookup, so a flood of `mine` costs no query either.
+  const now = Date.now();
+  if (now - client.lastMineAt < config.pool.mineCooldownMs) {
+    return send(client, { t: "error", message: "one moment" });
+  }
+  client.lastMineAt = now;
+
   if (!listingExists(listingId)) return send(client, { t: "error", message: "no such listing" });
 
   stopMining(client);
@@ -330,7 +428,9 @@ function startMining(client: Client, listingId: string) {
   }
 
   client.listingId = listingId;
-  client.badSubmits = 0;
+  // badSubmits is deliberately not cleared here. It is reset by an accepted share and
+  // by nothing else: a counter a client can zero with a message it chooses to send is
+  // not a limit on that client.
   broadcastJob(conn, client); // a socket that is already subscribed can start them now
 }
 

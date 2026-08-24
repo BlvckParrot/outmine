@@ -109,11 +109,29 @@ export const config = {
      *  Counting rejects alone is not enough: a pool that has had enough of bad shares
      *  simply stops replying, so silence counts against the miner too. */
     maxBadSubmits: int("MAX_BAD_SUBMITS", 10, { min: 1, max: 1000 }),
+
+    /** How long an empty pool socket is held before it is closed.
+     *
+     *  Not zero, which is what closing on the last miner leaving amounts to: a visitor
+     *  switching listings leaves and rejoins in the same tick, and that would be a
+     *  fresh TCP connect, subscribe and authorize against the pool every time. Repeated
+     *  fast enough it is a connection flood from our address, and the ban takes the
+     *  whole site's earnings with it. */
+    idleConnectionMs: int("POOL_IDLE_MS", 30_000, { min: 0, max: 600_000 }),
+
+    /** Shortest gap between two `mine` messages from one socket. The grace period above
+     *  already keeps the churn off the pool; this keeps it off the database, since every
+     *  `mine` costs a listing lookup. */
+    mineCooldownMs: int("MINE_COOLDOWN_MS", 2_000, { min: 0, max: 60_000 }),
   },
 
   limits: {
     /** Total simultaneous visitors holding a socket, mining or just watching. */
     maxClients: int("MAX_CLIENTS", 2000, { min: 1, max: 100_000 }),
+    /** Sockets one address may hold. Without it the ceiling above is a single global
+     *  counter, so one host can take every slot and every later visitor is turned away
+     *  at the door - and each accepted socket also costs a board snapshot. */
+    maxClientsPerAddress: int("MAX_CLIENTS_PER_ADDRESS", 10, { min: 1, max: 10_000 }),
     /** Largest WebSocket frame accepted. Our biggest message is a board snapshot going
      *  the other way; anything large arriving is either a bug or an attack. */
     maxWsPayloadBytes: int("MAX_WS_PAYLOAD_BYTES", 16 * 1024, { min: 512, max: 1 << 20 }),
@@ -126,6 +144,10 @@ export const config = {
      *  capped to keep one client from claiming the whole board. */
     maxReportedHashrate: int("MAX_REPORTED_HASHRATE", 5_000_000, { min: 1 }),
     newListingsPerMinute: int("RATE_MAX", 5, { min: 1, max: 10_000 }),
+    /** Requests per address per minute for the reads that cost real work: rasterising a
+     *  share card, and the outbound hop, which writes a row. Generous next to a person
+     *  clicking, and a ceiling for anything looping. */
+    expensiveReadsPerMinute: int("READ_RATE_MAX", 60, { min: 1, max: 100_000 }),
     /** Largest uploaded icon. The browser re-draws every pick onto a 128px canvas
      *  before sending, and the worst case that survives that is a noisy photo at
      *  roughly 55 kB, so this is headroom over our own encoder rather than a budget
@@ -150,6 +172,9 @@ export const config = {
     broadcastMs: int("BOARD_BROADCAST_MS", 2_000, { min: 100, max: 60_000 }),
     /** How often in-memory counters are written to SQLite. */
     flushMs: int("FLUSH_MS", 30_000, { min: 500, max: 600_000 }),
+    /** Longest accepted board search. Longer than any name it could match, and short
+     *  enough that the scan it forces is bounded. */
+    maxQueryLength: int("MAX_QUERY_LENGTH", 64, { min: 1, max: 500 }),
     maxNameLength: int("MAX_NAME_LENGTH", 60, { min: 1, max: 500 }),
     maxTaglineLength: int("MAX_TAGLINE_LENGTH", 200, { min: 1, max: 2000 }),
   },

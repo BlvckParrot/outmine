@@ -30,6 +30,20 @@ export type RequestContext = { socketAddress?: string };
 
 export const app = new Hono<{ Bindings: RequestContext }>();
 
+/** The badge and the share card exist to be loaded by other origins - that is the
+ *  entire feature. secureHeaders defaults Cross-Origin-Resource-Policy to same-origin,
+ *  which tells a browser to refuse exactly that.
+ *
+ *  Registered before secureHeaders on purpose: middleware unwinds in reverse, so the
+ *  outermost one has the last word on a header both of them set. */
+const embeddable = async (c: Context, next: () => Promise<void>) => {
+  await next();
+  c.res.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+};
+
+app.use("/badge/*", embeddable);
+app.use("/og/*", embeddable);
+
 /** Content-Security-Policy.
  *
  *  Worth the care on this site in particular: it serves PNGs that its own visitors
@@ -115,6 +129,12 @@ const editListingBody = validator("json", (value, c) => {
       return c.json({ error: `${field} must be text` }, 400);
     }
   }
+  // An empty patch is also what a body the validator declined to parse looks like: it
+  // hands the handler {} when the Content-Type is not JSON, and answering 200 with the
+  // unchanged listing would tell the sender an edit happened that did not.
+  if (body.name === undefined && body.tagline === undefined) {
+    return c.json({ error: "name or tagline is required" }, 400);
+  }
   return body as { name?: string; tagline?: string };
 });
 
@@ -142,8 +162,14 @@ app.get("/health", (c) => {
 app.get("/api/board", (c) => {
   const params = new URL(c.req.url).searchParams;
   const window = params.get("window") === "24h" ? "24h" : "all";
-  const q = params.get("q") ?? "";
-  const offset = Math.max(Number(params.get("offset") ?? 0) || 0, 0);
+  // Both bounded. `q` runs a leading-% LIKE over two columns, which no index can
+  // serve, and `offset` is walked row by row - so an uncapped one of either is a table
+  // scan whose cost the sender chooses.
+  const q = (params.get("q") ?? "").slice(0, config.board.maxQueryLength);
+  const offset = Math.min(
+    Math.max(Number(params.get("offset") ?? 0) || 0, 0),
+    config.board.entries * 100,
+  );
 
   const board = searchBoard({ window, q, offset, visible: 1 });
   const queue = searchBoard({ window, q, visible: 0 });
@@ -183,6 +209,13 @@ app.get("/api/stats", (c) => {
 
 // --- listings ----------------------------------------------------------------------
 
+/** What every limiter keys on, and it is not the library's default: that reads
+ *  X-Forwarded-For from the left, which is the end a client writes, so anyone could
+ *  reset their own limit with one forged header. clientAddress counts from the right,
+ *  by TRUSTED_PROXIES. Security control, not configuration - see security.ts. */
+const byAddress = (c: Context<{ Bindings: RequestContext }>) =>
+  clientAddress(c.req.raw.headers, c.env?.socketAddress);
+
 /** Per-address sliding window. Without it a bot floods the pending list, which is
  *  public and ordered, so a flood pushes the real entries off the end.
  *
@@ -191,11 +224,16 @@ app.get("/api/stats", (c) => {
 const newListingLimit = rateLimiter<{ Bindings: RequestContext }>({
   windowMs: 60_000,
   limit: config.limits.newListingsPerMinute,
-  // Ours, not the library's. Its default reads X-Forwarded-For from the left, which is
-  // the end a client writes, so anyone could reset their own limit with one forged
-  // header. clientAddress counts from the right, by TRUSTED_PROXIES. Security control,
-  // not configuration - see security.ts.
-  keyGenerator: (c) => clientAddress(c.req.raw.headers, c.env?.socketAddress),
+  keyGenerator: byAddress,
+  handler: (c) => c.json({ error: "slow down" }, 429),
+});
+
+/** The reads that are not free: rasterising a share card, and the outbound hop, which
+ *  is an unmetered UPDATE per request otherwise. */
+const readLimit = rateLimiter<{ Bindings: RequestContext }>({
+  windowMs: 60_000,
+  limit: config.limits.expensiveReadsPerMinute,
+  keyGenerator: byAddress,
   handler: (c) => c.json({ error: "slow down" }, 429),
 });
 
@@ -289,7 +327,7 @@ app.get("/icon/:id{.+\\.png}", (c) => {
   return c.body(icon as unknown as ArrayBuffer);
 });
 
-app.get("/r/:id", (c) => {
+app.get("/r/:id", readLimit, (c) => {
   const listing = getListing(c.req.param("id"));
   if (!listing) return c.notFound();
   countClick(listing.id);
@@ -374,15 +412,23 @@ not divide into 30 days of views. A listing taken down since is not listed.</p>`
 async function indexHandler(c: Context) {
   const index = Bun.file(`${config.webDist}/index.html`);
   if (!(await index.exists())) return c.text("frontend not built - run: bun run build", 503);
-  return c.html(withNonce(c, (await index.text()).replace(OG_MARKER, siteMeta(origin(c)))));
+  return c.html(withNonce(c, (await index.text()).replace(OG_MARKER, () => siteMeta(origin(c)))));
 }
 
 // Before serveStatic, which would otherwise answer "/" with the file itself: its
 // default document is index.html, and the copy on disk carries the marker rather than
 // the tags, so the home page would go out without an og:image.
+// Both spellings, or serveStatic answers /index.html with the file as it sits on disk:
+// og marker unreplaced, and a nonce placeholder that matches no nonce, so the CSP
+// blocks the theme script and a dark-theme visitor gets the white flash it exists to
+// prevent.
 app.get("/", indexHandler);
+app.get("/index.html", indexHandler);
 
-app.use("/og/*", etag());
+// etag saves the bytes on the way out, never the work: the middleware runs the handler
+// and hashes what it produced, so a card is rasterised either way. The limiter is what
+// bounds the work.
+app.use("/og/*", readLimit, etag());
 app.use("/badge/*", etag());
 
 // /l/:id, the badge and the cards, for the same reason.

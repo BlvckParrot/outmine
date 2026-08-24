@@ -211,3 +211,71 @@ test("the outbound hop counts a click and refuses to be indexed", async () => {
   const after = await json(`/api/listings/${listing.id}`);
   expect(after.clicks).toBe(1);
 });
+
+// --- headers and templating ----------------------------------------------------------
+
+test("the badge and the card may be embedded cross-origin, the icon may not", async () => {
+  const { listing } = await create();
+  // secureHeaders defaults CORP to same-origin, which would tell a browser to refuse
+  // the one thing a badge is for.
+  const badge = await app.request(`/badge/${listing.id}.svg`);
+  expect(badge.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+
+  const og = await app.request(`/og/${listing.id}.png`);
+  expect(og.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+
+  // Loaded by our own board only, so it keeps the stricter default.
+  expect((await app.request("/health")).headers.get("cross-origin-resource-policy"))
+    .toBe("same-origin");
+});
+
+test("the CSP refuses framing and inline script", async () => {
+  const csp = (await app.request("/health")).headers.get("content-security-policy") ?? "";
+  // Framing is the way around originAllowed: a frame is same-origin to us, so the
+  // consent banner can be clicked through from someone else's page.
+  expect(csp).toContain("frame-ancestors 'none'");
+  expect(csp).toContain("object-src 'none'");
+  expect(csp).toMatch(/script-src 'nonce-[^']+'/);
+});
+
+test("/index.html is templated, not served from disk", async () => {
+  // serveStatic would answer this one with the file as it sits on disk: og marker
+  // unreplaced, and a nonce placeholder that matches no nonce, so the CSP blocks the
+  // theme script the placeholder exists to bless.
+  const body = await (await app.request("/index.html")).text();
+  expect(body).not.toContain("__CSP_NONCE__");
+  expect(body).not.toContain("<!--og-->");
+});
+
+test("a listing name cannot splice the page into its own title", async () => {
+  // $& and $` are String.replace patterns and Bun.escapeHTML does not escape $.
+  const { listing } = await create({ name: "$`x" });
+  const body = await (await app.request(`/l/${listing.id}`)).text();
+  expect(body).not.toContain("<!--og-->");
+  expect(body.match(/<!doctype/gi)?.length ?? 0).toBe(1);
+});
+
+// --- bounds --------------------------------------------------------------------------
+
+test("a patch that changes nothing is refused rather than answered 200", async () => {
+  const { listing, editToken } = await create();
+  // Also the shape a body the validator declined to parse arrives in.
+  const res = await patch(listing.id, {}, editToken);
+  expect(res.status).toBe(400);
+});
+
+test("an oversized search and offset are clamped, not run as sent", async () => {
+  const body = await json(`/api/board?q=${"a".repeat(5000)}&offset=999999999`);
+  expect(Array.isArray(body.entries)).toBe(true);
+  expect(body.entries.length).toBe(0);
+});
+
+test("the outbound hop is rate limited", async () => {
+  const { listing } = await create();
+  const env = { socketAddress: "10.8.8.8" };
+  let last = 200;
+  for (let i = 0; i <= config.limits.expensiveReadsPerMinute; i++) {
+    last = (await app.request(`/r/${listing.id}`, {}, env)).status;
+  }
+  expect(last).toBe(429);
+});

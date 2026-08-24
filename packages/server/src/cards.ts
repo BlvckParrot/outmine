@@ -121,6 +121,19 @@ export function cardPng(listing: ListingDetail): Buffer {
   return png;
 }
 
+/** The home card takes no parameters, so one buffer is the whole cache. Without it this
+ *  is the cheapest request on the site to send and the most expensive to answer: resvg
+ *  is synchronous, so every hit blocks the loop that also serves the board broadcast and
+ *  the pool sockets. */
+let homeCard: { png: Buffer; at: number } | null = null;
+
+export function homeCardPng(top: { name: string; score: number }[]): Buffer {
+  if (homeCard && Date.now() - homeCard.at < CACHE_TTL_MS) return homeCard.png;
+  const png = render(homeCardSvg(top));
+  homeCard = { png, at: Date.now() };
+  return png;
+}
+
 export function render(svg: string): Buffer {
   return new Resvg(svg, {
     // The bundled font is passed explicitly and system fonts are off. A slim container

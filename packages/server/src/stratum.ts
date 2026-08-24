@@ -27,6 +27,10 @@ export type StratumEvents = {
   onDisconnected?: () => void;
 };
 
+/** Longest run of bytes accepted with no newline in it. A stratum line is a few hundred
+ *  bytes; this is room for a large mining.notify and nothing else. */
+const MAX_BUFFER_BYTES = 256 * 1024;
+
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 
@@ -100,6 +104,13 @@ export class StratumClient {
    *  a socket, which is where this code actually goes wrong. */
   feed(chunk: string | Uint8Array) {
     this.#buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+    // A line this long is not a stratum message. Kept bounded rather than parsed: the
+    // pool is trusted to be the pool, not trusted to stay well-behaved forever.
+    if (this.#buffer.length > MAX_BUFFER_BYTES) {
+      this.#buffer = "";
+      this.events.onError?.(new Error("pool sent an oversized line"));
+      return;
+    }
     const lines = this.#buffer.split("\n");
     this.#buffer = lines.pop() ?? ""; // last piece may be a partial message
     for (const line of lines) {
@@ -140,6 +151,8 @@ export class StratumClient {
 
   #send(method: string, params: unknown[]): number {
     const id = this.#nextId++;
+    // Recorded even when the socket is down, so the framing can be driven without one.
+    // Entries for replies that will never come are cleared by the next connect().
     this.#pending.set(id, method);
     this.#socket?.write(JSON.stringify({ id, method, params }) + "\n");
     return id;

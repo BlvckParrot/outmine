@@ -9,6 +9,9 @@ mkdirSync(dirname(config.dbPath), { recursive: true });
 export const db = new Database(config.dbPath, { create: true });
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA busy_timeout = 5000");
+// Off by default, and per connection. Without it the ON DELETE CASCADE in schema.sql is
+// a comment: a listing taken down would leave its share history behind for good.
+db.exec("PRAGMA foreign_keys = ON");
 // The usual pairing for WAL. At the default FULL every commit waits for an fsync,
 // including the one behind every outbound click. NORMAL still cannot corrupt the
 // database; a power cut can cost the last transactions, which here is at most one

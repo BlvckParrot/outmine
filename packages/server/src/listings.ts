@@ -49,7 +49,10 @@ function normalizeDomain(input: string): string {
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) throw new TargetError("invalid domain");
   if (/^\d+(\.\d+)*$/.test(host)) throw new TargetError("invalid domain");
 
-  return host + url.pathname.replace(/\/+$/, "");
+  // The host is bounded by the regex above; the path is not, so it is capped here -
+  // otherwise a listing carries however long a path the sender chose into every row
+  // that renders it.
+  return (host + url.pathname.replace(/\/+$/, "")).slice(0, 200);
 }
 
 function parseUrl(candidate: string): URL {
@@ -436,6 +439,13 @@ export const countHit = (kind: string, key = "") =>
     `INSERT INTO traffic (day, kind, key, n) VALUES (?, ?, ?, 1)
      ON CONFLICT (day, kind, key) DO UPDATE SET n = n + 1`,
   ).run(today(), kind, key);
+
+/** The referrer hosts already counted today. Read once a day by the hub, which admits
+ *  a bounded number of new ones and folds the rest together - see refKey there. */
+export const refKeysToday = (): string[] =>
+  db.query<{ key: string }, [number]>(
+    `SELECT key FROM traffic WHERE kind = 'ref' AND day = ?`,
+  ).all(today()).map((r) => r.key);
 
 export type TrafficDay = {
   day: number; visits: number; pages: number; views: number; mines: number;

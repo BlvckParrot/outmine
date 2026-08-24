@@ -5,7 +5,7 @@
 // and READMEs, which have their own rules about absolute URLs and escaping.
 import { Hono, type Context } from "hono";
 import type { ListingDetail } from "@outmine/protocol";
-import { badgeSvg, cardPng, homeCardSvg, render, standing } from "./cards";
+import { badgeSvg, cardPng, homeCardPng, standing } from "./cards";
 import { config } from "./config";
 import { getListing, listBoard, listingRank } from "./listings";
 
@@ -52,7 +52,7 @@ share.get("/badge/:id{.+\\.svg}", (c) => {
 share.get("/og/home.png", (c) => {
   c.header("Content-Type", "image/png");
   c.header("Cache-Control", CACHE);
-  return c.body(render(homeCardSvg(listBoard({ limit: 3 }))) as unknown as ArrayBuffer);
+  return c.body(homeCardPng(listBoard({ limit: 3 })) as unknown as ArrayBuffer);
 });
 
 share.get("/og/:id{.+\\.png}", (c) => {
@@ -72,7 +72,10 @@ share.get("/l/:id", async (c) => {
 
   const listing = detailOf(c.req.param("id"));
   const html = withNonce(c, await index.text());
-  return c.html(listing ? html.replace(OG_MARKER, listingMeta(listing, origin(c))) : html);
+  // A function replacement, not a string: $&, $` and $' are replacement patterns, and
+  // Bun.escapeHTML does not escape $, so a listing named `$\`` would otherwise splice
+  // the surrounding page into its own <title>.
+  return c.html(listing ? html.replace(OG_MARKER, () => listingMeta(listing, origin(c))) : html);
 });
 
 function listingMeta(listing: ListingDetail, site: string): string {

@@ -26,7 +26,7 @@ const server = Bun.serve<SocketData>({
     maxPayloadLength: config.limits.maxWsPayloadBytes,
 
     open(ws) {
-      const client = addClient(ws);
+      const client = addClient(ws, ws.data.address);
       if (!client) {
         ws.close(1013, "at capacity"); // 1013: try again later
         return;
@@ -49,7 +49,9 @@ function upgradeToMiner(req: Request, srv: Bun.Server<SocketData>): Response | u
     return new Response("origin not allowed", { status: 403 });
   }
 
-  const data: SocketData = { client: null };
+  // The peer address is only visible here. `open` needs it to hold one address to its
+  // share of sockets, and reading X-Forwarded-For instead would be client-controlled.
+  const data: SocketData = { client: null, address: srv.requestIP(req)?.address ?? "unknown" };
   return srv.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
 }
 
