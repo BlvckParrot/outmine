@@ -1,5 +1,4 @@
 // Owns the worker pool. The server hands out jobs; workers hand back nonces.
-export type MinerStatus = { threads: number; hashrate: number; running: boolean };
 
 export class Miner {
   #workers: Worker[] = [];

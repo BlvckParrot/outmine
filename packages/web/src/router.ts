@@ -17,7 +17,7 @@ export function usePath(): string {
 
 /** pushState does not fire popstate - that event is for the back button - so the one
  *  subscription above is driven by hand here. */
-export function navigate(to: string) {
+function navigate(to: string) {
   if (location.pathname === to) return;
   history.pushState(null, "", to);
   dispatchEvent(new PopStateEvent("popstate"));

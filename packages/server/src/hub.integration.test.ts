@@ -176,17 +176,29 @@ test.skipIf(!RUN)("two miners share one pool socket without crossing credit", as
   const health = await fetch(`${BASE}/health`).then((r) => r.json());
   expect(health.poolConnections).toBe(1);
 
+  // Both miners must actually have been given work, or the header comparison below
+  // would pass by comparing two empty sets and prove nothing.
+  for (const m of miners) expect(m.headers.size).toBeGreaterThan(0);
+
   // Same job, different headers - so different extranonce2 underneath.
   const [a, b] = miners;
   const shared = [...a!.headers].filter((h) => b!.headers.has(h));
   expect(shared).toHaveLength(0);
 
+  // At least one of the two has to have found something, otherwise the credit check
+  // below is comparing zero to zero. Not per miner: whether a particular miner finds a
+  // share inside the deadline is luck and the pool's current difficulty, and a test
+  // that fails on an unlucky afternoon teaches you to ignore it.
+  expect(miners.reduce((n, m) => n + m.accepted, 0)).toBeGreaterThan(0);
+
   // Credit is counted in memory and written to SQLite by a periodic flush, so poll
   // rather than read once: a single read races the flush and the comparison is only
   // meaningful once persistence has caught up.
+  // The real subject of this test: each listing is credited exactly what its own miner
+  // had accepted, including zero. Crossed credit is silent and the totals still look
+  // plausible, which is why it gets an end-to-end test rather than a unit one.
   for (const m of miners) {
     m.ws.close();
-    expect(m.accepted).toBeGreaterThan(0);
 
     const until = Date.now() + 40_000;
     let listing: { shares: number } = { shares: -1 };

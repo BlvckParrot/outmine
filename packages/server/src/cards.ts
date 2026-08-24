@@ -5,7 +5,7 @@
 // og:image, so the SVG below is rendered to PNG on the way out. The badge stays SVG,
 // which is what shields-style badges are and what GitHub renders happily.
 import { Resvg } from "@resvg/resvg-js";
-import { POINT_SCALE, type ListingDetail } from "@outmine/protocol";
+import { points, POINT_SCALE, type ListingDetail } from "@outmine/protocol";
 import { config } from "./config";
 
 const FONT_DIR = new URL("../assets/", import.meta.url).pathname;
@@ -27,13 +27,6 @@ function escapeXml(value: string): string {
 
 const truncate = (value: string, max: number) =>
   value.length <= max ? value : `${value.slice(0, max - 1)}…`;
-
-export const points = (score: number) => {
-  const scaled = score * POINT_SCALE;
-  if (scaled >= 1e6) return `${(scaled / 1e6).toFixed(1)}M`;
-  if (scaled >= 1e3) return `${(scaled / 1e3).toFixed(1)}k`;
-  return String(Math.round(scaled));
-};
 
 /** The line a badge and a card both lead with. */
 export const standing = (listing: Pick<ListingDetail, "rank" | "score">) =>

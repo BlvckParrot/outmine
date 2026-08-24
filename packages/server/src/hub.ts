@@ -6,8 +6,7 @@ import type { ServerWebSocket } from "bun";
 import type { BoardSnapshot, ClientMessage, ServerMessage } from "@outmine/protocol";
 import { buildHeader, bytesToHex, diffToTarget, type StratumJob } from "./blockheader";
 import { config } from "./config";
-import { db } from "./db";
-import { getBoard, getPending, listingExists } from "./listings";
+import { creditShares, listBoard, listingExists } from "./listings";
 import { log, makeThrottledLog } from "./log";
 import { StratumClient } from "./stratum";
 
@@ -311,7 +310,7 @@ function boardSnapshot(): BoardSnapshot {
 
   // Counters not yet flushed are added in, otherwise a share takes up to the flush
   // interval to appear and the board looks frozen while people are actively mining.
-  const live = (entry: ReturnType<typeof getBoard>[number]) => ({
+  const live = (entry: ReturnType<typeof listBoard>[number]) => ({
     ...entry,
     hashrate: Math.round(hashrates.get(entry.id) ?? 0),
     miners: miners.get(entry.id) ?? 0,
@@ -320,8 +319,8 @@ function boardSnapshot(): BoardSnapshot {
   });
 
   return {
-    entries: getBoard().map(live).sort((a, b) => b.score - a.score),
-    pending: getPending().map(live),
+    entries: listBoard().map(live).sort((a, b) => b.score - a.score),
+    pending: listBoard({ visible: 0 }).map(live),
     threshold: config.board.visibilityThreshold,
     online: clients.size,
     mining: miningCount(),
@@ -346,30 +345,12 @@ export function pushFeed(text: string) {
 export function flush() {
   if (unflushed.size === 0) return;
   const batch = [...unflushed.entries()];
-  const hour = Math.floor(Date.now() / 3_600_000);
 
   try {
-    db.transaction(() => {
-      for (const [listingId, acc] of batch) {
-        db.query(
-          `INSERT INTO share_buckets (listing_id, hour, shares, diff_sum) VALUES (?, ?, ?, ?)
-           ON CONFLICT (listing_id, hour) DO UPDATE SET
-             shares = shares + excluded.shares, diff_sum = diff_sum + excluded.diff_sum`,
-        ).run(listingId, hour, acc.shares, acc.diffSum);
-
-        db.query(`UPDATE listings SET shares = shares + ?, score = score + ? WHERE id = ?`)
-          .run(acc.shares, acc.diffSum, listingId);
-
-        const row = db.query(`SELECT name, shares, visible FROM listings WHERE id = ?`).get(listingId) as
-          | { name: string; shares: number; visible: number }
-          | null;
-        if (row && !row.visible && row.shares >= config.board.visibilityThreshold) {
-          db.query(`UPDATE listings SET visible = 1 WHERE id = ?`).run(listingId);
-          pushFeed(`${row.name} mined its way onto the board`);
-          log("gate_passed", { listingId, name: row.name });
-        }
-      }
-    })();
+    for (const { id, name } of creditShares(batch)) {
+      pushFeed(`${name} mined its way onto the board`);
+      log("gate_passed", { listingId: id, name });
+    }
   } catch (err) {
     // Counters stay put so the next flush retries them. Clearing first - the obvious
     // order - would throw away shares that were mined, accepted by the pool and paid

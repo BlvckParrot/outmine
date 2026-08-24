@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BoardEntry, BoardPageResponse } from "@outmine/protocol";
-import { apiUrl } from "../api";
+import { usePolled } from "../api";
 import { BoardRow, PendingRow } from "../components/BoardRow";
 import { SubmitForm } from "../components/SubmitForm";
 import { Trending } from "../components/Trending";
@@ -21,7 +21,6 @@ export function Home() {
   const [typed, setTyped] = useState("");
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
-  const [page, setPage] = useState<BoardPageResponse | null>(null);
 
   // The hub pushes the unfiltered top of the all-time board every couple of seconds.
   // That push is the right source only for exactly that view; under any filter it
@@ -39,25 +38,13 @@ export function Home() {
     return () => clearTimeout(id);
   }, [typed]);
 
-  useEffect(() => {
-    if (live) {
-      setPage(null);
-      return;
-    }
-    let cancelled = false;
-    const params = new URLSearchParams({ window: tab, q, offset: String(offset) });
-    const load = () =>
-      fetch(apiUrl(`/api/board?${params}`))
-        .then((r) => r.json())
-        .then((data: BoardPageResponse) => !cancelled && setPage(data))
-        .catch(() => {/* keep showing the last good page rather than blanking it */});
-    load();
-    const id = setInterval(load, 10_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [live, tab, q, offset]);
+  // Memoised because it is the hook's dependency: a fresh string every render would
+  // restart the poll on every render.
+  const path = useMemo(
+    () => (live ? null : `/api/board?${new URLSearchParams({ window: tab, q, offset: String(offset) })}`),
+    [live, tab, q, offset],
+  );
+  const page = usePolled<BoardPageResponse>(path, 10_000);
 
   const view: View = live
     ? { entries: board.entries, pending: board.pending, total: board.entries.length, limit: board.entries.length }

@@ -1,4 +1,5 @@
 import { fmt } from "../format";
+import { StatTile } from "./ui";
 
 export function MiningPanel(props: {
   name: string; hashrate: number; accepted: number; rejected: number;
@@ -17,9 +18,9 @@ export function MiningPanel(props: {
         </button>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-3 text-center">
-        <Stat label="hashrate" value={`${fmt(props.hashrate)} H/s`} />
-        <Stat label="accepted" value={String(props.accepted)} />
-        <Stat label="rejected" value={String(props.rejected)} />
+        <StatTile size="sm" label="hashrate" value={`${fmt(props.hashrate)} H/s`} />
+        <StatTile size="sm" label="accepted" value={String(props.accepted)} />
+        <StatTile size="sm" label="rejected" value={String(props.rejected)} />
       </div>
       <div className="mt-4 space-y-3 text-xs text-zinc-400">
         <label className="block">
@@ -37,9 +38,3 @@ export function MiningPanel(props: {
   );
 }
 
-const Stat = ({ label, value }: { label: string; value: string }) => (
-  <div className="rounded bg-black/30 p-2">
-    <div className="text-lg font-bold text-white">{value}</div>
-    <div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
-  </div>
-);

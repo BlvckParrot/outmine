@@ -150,17 +150,15 @@ export const config = {
   },
 } as const;
 
-/** Anything wrong with the environment, in the order it was read.
+/** Prints anything wrong with the environment and stops the process.
  *
- *  Reported rather than thrown: the entry point decides to die, so importing config
- *  from a test does not require a full production environment. */
-export const configProblems: readonly string[] = problems;
-
-/** Prints the problems and stops the process. Called by the entry point only. */
+ *  Problems are collected rather than thrown as they are found, and the entry point is
+ *  the only caller: importing config from a test must not require a full production
+ *  environment, and one bad value should list all of them, not just the first. */
 export function exitIfMisconfigured(): void {
-  if (configProblems.length === 0) return;
+  if (problems.length === 0) return;
   console.error("Configuration is not usable:");
-  for (const problem of configProblems) console.error(`  - ${problem}`);
+  for (const problem of problems) console.error(`  - ${problem}`);
   console.error("See .env.example.");
   process.exit(1);
 }

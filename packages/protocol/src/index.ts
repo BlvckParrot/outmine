@@ -52,6 +52,22 @@ export type ClientMessage =
  *  reads "0 pts"; scaled, one share is worth a couple of points. */
 export const POINT_SCALE = 1e6;
 
+/** 1234 -> "1.2k". Hashrates, shares and scores all span several orders of magnitude
+ *  and a raw number in a table column is unreadable at either end.
+ *
+ *  Here rather than on one side because both sides print the same numbers, and they
+ *  disagreed: the browser rounded millions to two decimals and the share card to one,
+ *  so a listing page and its own badge showed different scores. */
+export function compact(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return Math.round(n).toString();
+}
+
+/** A raw score as the points everything displays. Scaling belongs in here: leaving it
+ *  to each caller was the other half of the same disagreement. */
+export const points = (score: number) => compact(score * POINT_SCALE);
+
 // --- REST-only shapes -------------------------------------------------------------
 // The WebSocket only ever pushes the unfiltered top of the board. Anything filtered,
 // paged or aggregated is a request the client makes, so these types live apart from

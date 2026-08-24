@@ -22,5 +22,17 @@ CREATE TABLE IF NOT EXISTS share_buckets (
   PRIMARY KEY (listing_id, hour)
 );
 
-CREATE INDEX IF NOT EXISTS idx_listings_board ON listings(visible, score DESC);
+-- The two lists the hub rebuilds every broadcast. Each index carries the whole ORDER
+-- BY, tie-breaker included, so SQLite reads them in order instead of sorting into a
+-- temporary B-tree. Confirmed with EXPLAIN QUERY PLAN.
+--
+-- The DROP is not tidiness. CREATE INDEX IF NOT EXISTS matches on the name alone, so
+-- on a database that already has idx_listings_board the old two-column definition
+-- would silently survive and this change would only ever apply to fresh installs.
+DROP INDEX IF EXISTS idx_listings_board;
+CREATE INDEX IF NOT EXISTS idx_board ON listings(visible, score DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_queue ON listings(visible, shares DESC, created_at DESC);
+
+-- Used by the totals on /api/stats. The 24h board and trending both reach buckets
+-- through the primary key instead.
 CREATE INDEX IF NOT EXISTS idx_buckets_hour ON share_buckets(hour);

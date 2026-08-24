@@ -1,16 +1,9 @@
-import { POINT_SCALE, type BoardEntry } from "@outmine/protocol";
+import type { BoardEntry } from "@outmine/protocol";
 import { apiUrl } from "../api";
-import { colorOf, fmt } from "../format";
+import { fmt, points } from "../format";
+import { Avatar } from "./ui";
 import { linkProps } from "../router";
 
-const Avatar = ({ entry, dim }: { entry: BoardEntry; dim?: boolean }) => (
-  <span
-    className={`grid size-9 shrink-0 place-items-center rounded font-bold ${dim ? "text-white/70" : "text-white"}`}
-    style={{ background: colorOf(entry.target) }}
-  >
-    {entry.name[0]?.toUpperCase()}
-  </span>
-);
 
 export function BoardRow(props: { entry: BoardEntry; rank: number; onMine: () => void; mining: boolean }) {
   const { entry } = props;
@@ -37,7 +30,7 @@ export function BoardRow(props: { entry: BoardEntry; rank: number; onMine: () =>
         <p className="truncate text-xs text-zinc-500">{entry.tagline || entry.target}</p>
       </div>
       <div className="shrink-0 text-right text-xs">
-        <div className="text-emerald-400">{fmt(entry.score * POINT_SCALE)} pts</div>
+        <div className="text-emerald-400">{points(entry.score)} pts</div>
         <div className="text-zinc-600">
           {entry.miners > 0 && (
             <span className="text-emerald-600">

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { POINT_SCALE, type ListingDetail } from "@outmine/protocol";
-import { apiUrl } from "../api";
-import { colorOf, fmt } from "../format";
+import { useState } from "react";
+import type { ListingDetail } from "@outmine/protocol";
+import { apiUrl, usePolled } from "../api";
+import { Avatar, StatTile } from "../components/ui";
+import { fmt, points } from "../format";
 import { linkProps } from "../router";
 import { useSession } from "../session";
 
@@ -9,31 +10,21 @@ import { useSession } from "../session";
  *  stand on its own: rank, score, and a way to start mining without going home first. */
 export function Listing({ id }: { id: string }) {
   const { board, mineFor, startMining, consented, accept } = useSession();
-  const [listing, setListing] = useState<ListingDetail | null>(null);
-  const [missing, setMissing] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    setListing(null);
-    setMissing(false);
-    fetch(apiUrl(`/api/listings/${id}`))
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then(setListing)
-      .catch(() => setMissing(true));
-  }, [id]);
+  const listing = usePolled<ListingDetail>(`/api/listings/${id}`, 15_000);
 
   // The board snapshot arrives every couple of seconds; the fetch above happens once.
   // Preferring the snapshot keeps the live numbers moving while someone mines.
   const liveEntry = [...board.entries, ...board.pending].find((e) => e.id === id);
 
-  if (missing) {
+  if (!listing) {
     return (
-      <p className="mt-8 rounded border border-zinc-800 p-6 text-sm text-zinc-500">
-        No such listing. <a {...linkProps("/")}>Back to the board</a>.
+      <p className="mt-8 text-sm text-zinc-500">
+        Loading… if nothing appears, this listing is gone —{" "}
+        <a {...linkProps("/")} className="text-emerald-400 hover:underline">back to the board</a>.
       </p>
     );
   }
-  if (!listing) return <p className="mt-8 text-sm text-zinc-500">Loading…</p>;
 
   const score = liveEntry?.score ?? listing.score;
   const shares = liveEntry?.shares ?? listing.shares;
@@ -46,12 +37,7 @@ export function Listing({ id }: { id: string }) {
   return (
     <article className="mt-8">
       <div className="flex items-start gap-4">
-        <span
-          className="grid size-14 shrink-0 place-items-center rounded text-2xl font-bold text-white"
-          style={{ background: colorOf(listing.target) }}
-        >
-          {listing.name[0]?.toUpperCase()}
-        </span>
+        <Avatar entry={listing} size="lg" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-2xl font-bold text-white">{listing.name}</h1>
           <p className="mt-1 text-sm text-zinc-500">{listing.tagline}</p>
@@ -74,10 +60,10 @@ export function Listing({ id }: { id: string }) {
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Cell label="rank" value={listing.rank ? `#${listing.rank}` : "in the queue"} />
-        <Cell label="points" value={fmt(score * POINT_SCALE)} />
-        <Cell label="shares" value={fmt(shares)} />
-        <Cell
+        <StatTile label="rank" value={listing.rank ? `#${listing.rank}` : "in the queue"} />
+        <StatTile label="points" value={points(score)} />
+        <StatTile label="shares" value={fmt(shares)} />
+        <StatTile
           label="mining now"
           value={liveEntry?.miners ? `${liveEntry.miners} · ${fmt(liveEntry.hashrate)} H/s` : "0"}
         />
@@ -127,9 +113,3 @@ export function Listing({ id }: { id: string }) {
   );
 }
 
-const Cell = ({ label, value }: { label: string; value: string }) => (
-  <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3">
-    <div className="text-lg font-bold text-white">{value}</div>
-    <div className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
-  </div>
-);

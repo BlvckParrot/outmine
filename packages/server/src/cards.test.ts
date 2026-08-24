@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { badgeSvg, cardSvg, homeCardSvg, points, render, standing } from "./cards";
+import { points } from "@outmine/protocol";
+import { badgeSvg, cardSvg, homeCardSvg, render, standing } from "./cards";
 
 const listing = {
   id: "abc123abc123", kind: "domain" as const, target: "acme.example",
@@ -12,7 +13,7 @@ test("standing reads as a rank once the listing is on the board", () => {
   expect(standing({ rank: null, score: 0 })).toBe("in the queue");
 });
 
-test("points scales so a share is worth something readable", () => {
+test("points scales so a share is worth something readable, identically on both sides", () => {
   expect(points(0.000002)).toBe("2");
   expect(points(0.004)).toBe("4.0k");
   expect(points(4)).toBe("4.0M");

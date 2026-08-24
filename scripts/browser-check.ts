@@ -29,13 +29,23 @@ await mineBtn.click();
 const readStat = async (label: string) =>
   (await page.locator(`div:has(> div:text-is("${label}")) > div`).first().textContent())?.trim();
 
-for (let i = 0; i < 10; i++) {
+// Wait for the first accepted share rather than for a fixed number of seconds. How
+// long that takes depends on the pool's current difficulty and on how busy this
+// machine is; a fixed window made the check fail on a slow afternoon while mining was
+// working perfectly. The assertion is unchanged - a share must land - only the
+// patience is adaptive.
+const DEADLINE_MS = 120_000;
+const startedAt = Date.now();
+
+while (Date.now() - startedAt < DEADLINE_MS) {
   await page.waitForTimeout(2500);
   const hs = await readStat("hashrate");
   const acc = await readStat("accepted");
   const rej = await readStat("rejected");
   const header = (await page.locator("header p").last().textContent())?.trim();
-  console.log(`  t+${(i + 1) * 2.5}s  hashrate=${hs}  accepted=${acc}  rejected=${rej}  header="${header}"`);
+  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+  console.log(`  t+${elapsed}s  hashrate=${hs}  accepted=${acc}  rejected=${rej}  header="${header}"`);
+  if (Number(acc) > 0) break;
 }
 
 await page.screenshot({ path: `${SHOT}/02-mining.png` });

@@ -28,6 +28,18 @@ progress bar. They have to be — a gate that hides listings from the very peopl
 would mine them onto the board is a wall, and a fresh install would have nothing to
 mine for at all.
 
+## Storage
+
+SQLite in WAL mode with `synchronous = NORMAL`, the usual pairing. At the default
+`FULL` every commit waits for an fsync, including the one behind every outbound click.
+`NORMAL` cannot corrupt the database; a power cut can cost the last transactions, which
+here is at most one flush interval of shares.
+
+Two indexes carry the whole `ORDER BY` of the two lists the hub rebuilds on every
+broadcast, tie-breaker included, so SQLite walks them in order instead of sorting into
+a temporary B-tree. Checked with `EXPLAIN QUERY PLAN`, which is also the way to notice
+when a query stops using them.
+
 ## Two boards, one table
 
 All-time score never decays, which is the right rule for a leaderboard and a bad one
@@ -161,23 +173,27 @@ policy below.
 packages/protocol/   the WebSocket contract, imported by both server and browser
 packages/wasm/       MinotaurX hasher, compiled from cpuminer-multi with emcc
 packages/web/
-  App.tsx            the shell: one socket, one miner, whichever page the URL names
-  router.ts          twelve lines of pushState; six paths do not need a dependency
+  App.tsx            layout: consent, the mining panel, the page the URL names
+  miner-session.ts   useMiner: the socket, the worker pool, the counters
+  router.ts          a dozen lines of pushState; six paths do not need a dependency
+  api.ts             where the API is, and usePolled for the pages that read from it
   session.ts         what pages read from the live connection
   pages/             home, listing, stats, about, rules, faq
-  components/        board rows, consent, mining panel, submit form, trending
+  components/        board rows, consent, mining panel, submit form, trending, ui
   miner.worker.ts    the hashing worker
 packages/server/
   config.ts          every tunable, validated at startup
   security.ts        origin policy, client address, constant-time comparison
   routes.ts          the HTTP surface
+  share.ts           /l/:id, the badge, the cards, the crawler tags
   server.ts          socket wiring, the upgrade gate, shutdown
   hub.ts             clients, pool connections, scoring, the board
-  cards.ts           the share card and the badge
+  cards.ts           drawing the share card and the badge
   assets/            JetBrains Mono, shipped so the card renders in a slim container
   stratum.ts         one pool connection: framing, submits, reconnect
   blockheader.ts     stratum job -> the 80 bytes the miner hashes
-  listings.ts        target normalisation, board queries, the listings table
+  listings.ts        target normalisation and every SQL statement in the project
+  db.ts              the connection, the pragmas, the liveness probe
 scripts/             backup, browser check, algorithm ranking
 ```
 
@@ -185,6 +201,11 @@ Bun workspaces. Still one deployed process and one SQLite file; two runtime
 dependencies (`hono` and `@resvg/resvg-js`, the latter only to turn a share card into
 a PNG). The split is about keeping the boundaries honest — the browser cannot reach
 into server code, and the shared contract is a package rather than a relative path.
+
+Two rules hold this together. **Every SQL statement lives in `listings.ts`**, so the
+ordering of the board, its tie-break and the rank a badge prints cannot drift apart -
+they are one constant used three times. And **`useMiner` sits above the router**, so
+navigating between pages cannot stop mining.
 
 The WASM exports one function, `mine(header, target, nonceStart, nonceEnd)`. The nonce
 loop lives in C because crossing the JS/WASM boundary per hash costs more than a hash.

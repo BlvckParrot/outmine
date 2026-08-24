@@ -71,7 +71,7 @@ function checkedName(raw: string): string {
 
 const checkedTagline = (raw: string) => cleanText(raw).slice(0, config.board.maxTaglineLength);
 
-export type CreateResult = { listing: Listing; editToken: string };
+type CreateResult = { listing: Listing; editToken: string };
 
 export function createListing(input: {
   kind: "domain" | "handle";
@@ -135,22 +135,13 @@ export const getListing = (id: string) =>
 
 export const deleteListing = (id: string) => db.query(`DELETE FROM listings WHERE id = ?`).run(id);
 
-export const getBoard = (limit = config.board.entries) =>
-  db.query(
-    `SELECT ${PUBLIC_COLUMNS} FROM listings WHERE visible = 1
-     ORDER BY score DESC, created_at ASC LIMIT ?`,
-  ).all(limit) as Listing[];
-
-/** Listings still short of the gate. They must stay discoverable, otherwise nobody
- *  can mine them onto the board and the gate becomes a wall. */
-export const getPending = (limit = config.board.pendingEntries) =>
-  db.query(
-    `SELECT ${PUBLIC_COLUMNS} FROM listings WHERE visible = 0
-     ORDER BY shares DESC, created_at DESC LIMIT ?`,
-  ).all(limit) as Listing[];
-
 export const listingExists = (id: string) =>
   db.query(`SELECT 1 FROM listings WHERE id = ?`).get(id) !== null;
+
+/** One outbound click. Counted here rather than in the route so every statement that
+ *  touches this table lives in one file. */
+export const countClick = (id: string) =>
+  db.query(`UPDATE listings SET clicks = clicks + 1 WHERE id = ?`).run(id);
 
 /** 12 hex characters, 48 bits. The previous 8 gave a coin-flip chance of collision
  *  around 77k listings, which is inside the range a board like this could reach. */
@@ -161,102 +152,184 @@ const newListingId = () => crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 const hashToken = (token: string) =>
   new Bun.CryptoHasher("sha256").update(token).digest("hex");
 
-
-// --- board pages ----------------------------------------------------------------
+// --- the board ---------------------------------------------------------------------
 
 export type BoardWindow = "all" | "24h";
 
 export type BoardQuery = {
-  /** "24h" scores a listing by what was mined for it in the last day instead of
-   *  since it was created. Without it the board settles: a listing from launch week
-   *  can sit on top forever while nobody mines for it any more. */
+  /** "24h" scores a listing by what was mined for it in the last day instead of since
+   *  it was created. Without it the board settles: a listing from launch week can sit
+   *  on top forever while nobody mines for it any more. */
   window?: BoardWindow;
   q?: string;
   offset?: number;
   limit?: number;
   /** 1 is the board, 0 is the queue waiting on the proof-of-work gate. A search that
-   *  covered only the board would hide exactly the listings that most need someone
-   *  to find them and mine for them. */
+   *  covered only the board would hide exactly the listings that most need someone to
+   *  find them and mine for them. */
   visible?: 0 | 1;
 };
 
 export type BoardPage = { rows: Listing[]; total: number };
 
+/** How each list is ranked, written once.
+ *
+ *  The board goes by score with ties to the older entry; the queue by how close it is
+ *  to the gate, because sorting newcomers by score would pile them all at the bottom
+ *  in one indistinguishable block. `listingRank` below reuses the board rule - a rank
+ *  that disagreed with the list it labels would be worse than no rank.
+ *
+ *  Unqualified on purpose. In the 24h query `score` and `shares` are aggregate
+ *  aliases, which SQLite resolves ahead of the table's own columns; in the plain query
+ *  there is only one table and nothing to be ambiguous about. */
+const ORDER = {
+  board: "score DESC, created_at ASC",
+  queue: "shares DESC, created_at DESC",
+} as const;
+
+const PREFIXED_COLUMNS = PUBLIC_COLUMNS.split(", ").map((column) => `l.${column}`).join(", ");
+
 /** LIKE treats % and _ as wildcards, so a search for "%" would match every row and a
  *  search for a literal underscore would match any character. SQLite has no built-in
- *  quoting for this; the pattern is escaped by hand and the query declares the
- *  escape character.
+ *  quoting for this; the pattern is escaped by hand and the query declares the escape
+ *  character.
  *
- *  Exported only so the escaping has a test of its own: getBoardPage needs a database
- *  and this is the part that goes wrong silently. */
+ *  Exported only so the escaping has a test of its own: the board queries need a
+ *  database and this is the part that goes wrong silently. */
 export const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 
-/** The board, filtered and paged. `getBoard` above stays as it is: the hub broadcasts
- *  the unfiltered top of the board on a timer and has no use for any of this. */
-export function getBoardPage(query: BoardQuery = {}): BoardPage {
-  const limit = Math.min(Math.max(query.limit ?? config.board.entries, 1), config.board.entries);
-  const offset = Math.max(query.offset ?? 0, 0);
+/** The WHERE every board query shares, with the parameters it binds. */
+function boardFilter(query: BoardQuery) {
+  const visible = query.visible ?? 1;
   const search = (query.q ?? "").trim();
   const pattern = search ? likePattern(search) : null;
-  const visible = query.visible ?? 1;
 
-  const filter = pattern
-    ? `AND (l.name LIKE $pattern ESCAPE '\\' OR l.target LIKE $pattern ESCAPE '\\')`
-    : "";
+  const where = pattern
+    ? `l.visible = $visible AND (l.name LIKE $pattern ESCAPE '\\' OR l.target LIKE $pattern ESCAPE '\\')`
+    : `l.visible = $visible`;
 
-  const { n: total } = db.query(
-    `SELECT COUNT(*) AS n FROM listings l WHERE l.visible = $visible ${filter}`,
-  ).get({ $visible: visible, ...(pattern ? { $pattern: pattern } : {}) }) as { n: number };
-
-  const page = {
-    $limit: limit,
-    $offset: offset,
-    $visible: visible,
-    ...(pattern ? { $pattern: pattern } : {}),
+  return {
+    visible,
+    where,
+    params: { $visible: visible, ...(pattern ? { $pattern: pattern } : {}) },
   };
+}
 
-  // The queue is ranked by how close each entry is to the gate, the board by score.
-  // Sorting the queue by score would put every brand new listing in one indistinct
-  // block at the bottom, which is where nobody looks.
-  // In the 24h branch score and shares are aggregate aliases, so they cannot carry the
-  // table prefix the plain branch needs. Two strings rather than one clever one.
-  const orderAggregate = visible === 1 ? "score DESC, l.created_at ASC" : "shares DESC, l.created_at DESC";
-  const orderPlain = visible === 1 ? "l.score DESC, l.created_at ASC" : "l.shares DESC, l.created_at DESC";
+/** Rows only. This is the hub's path, run every couple of seconds for the broadcast,
+ *  so it does not pay for a COUNT that nobody reads. */
+export function listBoard(query: BoardQuery = {}): Listing[] {
+  const { visible, where, params } = boardFilter(query);
+  const order = visible === 1 ? ORDER.board : ORDER.queue;
+
+  const ceiling = visible === 1 ? config.board.entries : config.board.pendingEntries;
+  const limit = Math.min(Math.max(query.limit ?? ceiling, 1), config.board.entries);
+  const page = { ...params, $limit: limit, $offset: Math.max(query.offset ?? 0, 0) };
 
   if (query.window === "24h") {
     // One row per listing either way: the LEFT JOIN fans out over buckets and the
-    // GROUP BY folds them back, so the count above still describes this set.
+    // GROUP BY folds them back, so the count below still describes this same set.
     const since = Math.floor(Date.now() / 3_600_000) - 23;
-    const rows = db.query(
+    return db.query(
       `SELECT l.id, l.kind, l.target, l.name, l.tagline, l.created_at, l.visible, l.clicks,
               COALESCE(SUM(b.shares), 0) AS shares,
               COALESCE(SUM(b.diff_sum), 0) AS score
        FROM listings l
        LEFT JOIN share_buckets b ON b.listing_id = l.id AND b.hour >= $since
-       WHERE l.visible = $visible ${filter}
+       WHERE ${where}
        GROUP BY l.id
-       ORDER BY ${orderAggregate}
+       ORDER BY ${order}
        LIMIT $limit OFFSET $offset`,
     ).all({ ...page, $since: since }) as Listing[];
-    return { rows, total };
   }
 
-  const rows = db.query(
-    `SELECT ${PUBLIC_COLUMNS.split(", ").map((c) => `l.${c}`).join(", ")}
-     FROM listings l WHERE l.visible = $visible ${filter}
-     ORDER BY ${orderPlain}
+  return db.query(
+    `SELECT ${PREFIXED_COLUMNS} FROM listings l WHERE ${where}
+     ORDER BY ${order}
      LIMIT $limit OFFSET $offset`,
   ).all(page) as Listing[];
-  return { rows, total };
 }
 
-/** Where a listing sits on the all-time board. Ties go to the older entry, matching
- *  `getBoard`'s ordering - a rank that disagreed with the list it labels would be
- *  worse than no rank at all. */
+/** Rows plus how many matched the filter, which is what tells the client whether
+ *  another page exists. The API path; the hub does not need it. */
+export function searchBoard(query: BoardQuery = {}): BoardPage {
+  const { where, params } = boardFilter(query);
+  const { n } = db.query(
+    `SELECT COUNT(*) AS n FROM listings l WHERE ${where}`,
+  ).get(params) as { n: number };
+  return { rows: listBoard(query), total: n };
+}
+
+/** Where a listing sits on the all-time board. */
 export function listingRank(listing: Pick<Listing, "score" | "created_at">): number {
   const { n } = db.query(
     `SELECT COUNT(*) AS n FROM listings
      WHERE visible = 1 AND (score > $score OR (score = $score AND created_at < $created))`,
   ).get({ $score: listing.score, $created: listing.created_at }) as { n: number };
   return n + 1;
+}
+
+/** What has been mined for recently, which is a different question from who is on top. */
+export const trending = (hours = 2, limit = config.board.trendingEntries) =>
+  db.query(
+    `SELECT l.id, l.name, l.target, SUM(b.diff_sum) AS recent
+     FROM share_buckets b JOIN listings l ON l.id = b.listing_id
+     WHERE b.hour >= ? AND l.visible = 1
+     GROUP BY l.id ORDER BY recent DESC LIMIT ?`,
+  ).all(Math.floor(Date.now() / 3_600_000) - (hours - 1), limit) as {
+    id: string; name: string; target: string; recent: number;
+  }[];
+
+/** Everything the site has ever accumulated, for the public stats page. */
+export function boardTotals() {
+  const totals = db.query(
+    `SELECT COUNT(*) AS listings, COALESCE(SUM(visible), 0) AS onBoard,
+            COALESCE(SUM(shares), 0) AS shares, COALESCE(SUM(score), 0) AS score,
+            COALESCE(SUM(clicks), 0) AS clicks
+     FROM listings`,
+  ).get() as { listings: number; onBoard: number; shares: number; score: number; clicks: number };
+
+  const since = Math.floor(Date.now() / 3_600_000) - 23;
+  const { shares24h } = db.query(
+    `SELECT COALESCE(SUM(shares), 0) AS shares24h FROM share_buckets WHERE hour >= ?`,
+  ).get(since) as { shares24h: number };
+
+  return { ...totals, shares24h };
+}
+
+// --- crediting ---------------------------------------------------------------------
+
+export type ShareBatch = readonly (readonly [string, { shares: number; diffSum: number }])[];
+
+/** Writes a round of accepted shares and flips anything that has cleared the gate.
+ *
+ *  One transaction: a partial write would credit the hourly bucket without the running
+ *  total, or the other way round, and the two would never agree again. Returns the
+ *  listings that just became visible so the caller can announce them - the feed and the
+ *  log belong to the hub, the SQL belongs here. */
+export function creditShares(batch: ShareBatch): { id: string; name: string }[] {
+  const hour = Math.floor(Date.now() / 3_600_000);
+  const passed: { id: string; name: string }[] = [];
+
+  db.transaction(() => {
+    for (const [id, acc] of batch) {
+      db.query(
+        `INSERT INTO share_buckets (listing_id, hour, shares, diff_sum) VALUES (?, ?, ?, ?)
+         ON CONFLICT (listing_id, hour) DO UPDATE SET
+           shares = shares + excluded.shares, diff_sum = diff_sum + excluded.diff_sum`,
+      ).run(id, hour, acc.shares, acc.diffSum);
+
+      db.query(`UPDATE listings SET shares = shares + ?, score = score + ? WHERE id = ?`)
+        .run(acc.shares, acc.diffSum, id);
+
+      const row = db.query(`SELECT name, shares, visible FROM listings WHERE id = ?`).get(id) as
+        | { name: string; shares: number; visible: number }
+        | null;
+      if (row && !row.visible && row.shares >= config.board.visibilityThreshold) {
+        db.query(`UPDATE listings SET visible = 1 WHERE id = ?`).run(id);
+        passed.push({ id, name: row.name });
+      }
+    }
+  })();
+
+  return passed;
 }
