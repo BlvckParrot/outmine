@@ -1,18 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Miner } from "./mining";
-
-type Entry = {
-  id: string; kind: "domain" | "handle"; target: string; name: string; tagline: string;
-  clicks: number; shares: number; score: number; hashrate: number;
-};
-type Board = {
-  entries: Entry[]; pending: Entry[]; threshold: number;
-  online: number; mining: number; feed: { ts: number; text: string }[];
-};
-
-// Score is the sum of pool difficulties, which runs around 0.000002 per share.
-// Raw, every listing reads "0 pts"; scaled, one share is worth a couple of points.
-const POINT_SCALE = 1e6;
+import { POINT_SCALE, type BoardEntry, type BoardSnapshot, type ServerMessage } from "../../src/protocol";
 
 const fmt = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : Math.round(n).toString();
@@ -24,7 +12,7 @@ const colorOf = (s: string) => {
 };
 
 export default function App() {
-  const [board, setBoard] = useState<Board>({ entries: [], pending: [], threshold: 1, online: 0, mining: 0, feed: [] });
+  const [board, setBoard] = useState<BoardSnapshot>({ entries: [], pending: [], threshold: 1, online: 0, mining: 0, feed: [] });
   const [mineFor, setMineFor] = useState<string | null>(null);
   const [threads, setThreads] = useState(() => Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
   const [throttle, setThrottle] = useState(0.3);
@@ -56,7 +44,7 @@ export default function App() {
         if (!closed) setTimeout(connect, 2000);
       };
       socket.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
+        const msg: ServerMessage = JSON.parse(e.data);
         if (msg.t === "board") setBoard(msg);
         if (msg.t === "job") miner.current?.setJob(msg);
         if (msg.t === "shareResult") (msg.ok ? setAccepted : setRejected)((n) => n + 1);

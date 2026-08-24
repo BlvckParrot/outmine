@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import createModule from "./build/mine.mjs";
+import { createModule } from "./module";
 
 // Reference vectors produced by wasm/build/vector, the native build of the
 // same C sources. A WASM build that disagrees here is silently mining garbage:

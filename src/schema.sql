@@ -22,14 +22,5 @@ CREATE TABLE IF NOT EXISTS share_buckets (
   PRIMARY KEY (listing_id, hour)
 );
 
-CREATE TABLE IF NOT EXISTS events (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts         INTEGER NOT NULL,
-  type       TEXT NOT NULL,
-  listing_id TEXT,
-  payload    TEXT NOT NULL DEFAULT '{}'
-);
-
 CREATE INDEX IF NOT EXISTS idx_listings_board ON listings(visible, score DESC);
 CREATE INDEX IF NOT EXISTS idx_buckets_hour ON share_buckets(hour);
-CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC);

@@ -2,8 +2,8 @@
 // Multiply zpool's rate by the hashrate you actually measure with `bun run bench`.
 const BROWSER_HS = Number(process.env.BROWSER_HS ?? 877); // measured, 1 thread, Apple M-series
 
-const status = await fetch("https://zpool.ca/api/status").then((r) => r.json());
-const rows = Object.values<any>(status)
+const algos = await fetch("https://zpool.ca/api/status").then((r) => r.json());
+const rows = Object.values<any>(algos)
   .filter((a) => Number(a.estimate_last24h) > 0)
   .map((a) => ({
     algo: a.name,
@@ -16,3 +16,5 @@ const rows = Object.values<any>(status)
 console.table(rows);
 console.log("\nNote: rate per MH/s only ranks algorithms if they run at similar H/s in a browser.");
 console.log("minotaurx and yescrypt both cost one yespower round per hash, so the rate decides.");
+
+export {};

@@ -7,10 +7,19 @@ services:
       - ./data:/app/data
     expose:
       - "3000"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "process.exit(await fetch('http://localhost:3000/health').then(r => r.ok ? 0 : 1).catch(() => 1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   caddy:
     image: caddy:2
     restart: unless-stopped
+    # Caddy reads SITE_ADDRESS from the Caddyfile. Without this it silently falls back
+    # to localhost and never gets a certificate for the real domain.
+    env_file: .env
     ports:
       - "80:80"
       - "443:443"

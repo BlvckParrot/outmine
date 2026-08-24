@@ -1,21 +1,48 @@
 import { Hono } from "hono";
-import type { ServerWebSocket } from "bun";
 import { db } from "./db";
-import { addClient, clientCount, flush, handleMessage, pushFeed, removeClient, startLoops, type Client } from "./hub";
+import {
+  addClient, clientCount, connectionCount, flush, handleMessage, log, poolHealthy,
+  pushFeed, removeClient, startLoops, type SocketData,
+} from "./hub";
 import { createListing, getBoard, getListing, getPending, TargetError, updateListing, VISIBILITY_THRESHOLD } from "./listings";
+import type { BoardSnapshot } from "./protocol";
+
+// Mining with no payout address credits nobody and nothing complains. Refusing to
+// start is louder and cheaper than discovering it on the pool dashboard next week.
+if (!process.env.POOL_USER) {
+  console.error("POOL_USER is not set - every share would be mined for nobody. See .env.example.");
+  process.exit(1);
+}
+
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 const app = new Hono();
 
+app.get("/health", (c) => {
+  try {
+    db.query("SELECT 1").get();
+  } catch (err) {
+    return c.json({ ok: false, error: String(err) }, 503);
+  }
+  return c.json({
+    ok: true,
+    clients: clientCount(),
+    poolConnections: connectionCount(),
+    poolHealthy: poolHealthy(),
+  });
+});
+
 // Fallback for first paint and for clients without a WebSocket. Shape must match
 // the "board" message the hub broadcasts, minus the live-only fields.
-app.get("/api/board", (c) =>
-  c.json({
-    entries: getBoard(),
-    pending: getPending(),
-    online: clientCount(),
+app.get("/api/board", (c) => {
+  const snapshot: Omit<BoardSnapshot, "feed" | "mining"> = {
+    entries: getBoard().map((e) => ({ ...e, hashrate: 0 })),
+    pending: getPending().map((e) => ({ ...e, hashrate: 0 })),
     threshold: VISIBILITY_THRESHOLD,
-  }),
-);
+    online: clientCount(),
+  };
+  return c.json(snapshot);
+});
 
 app.get("/api/trending", (c) => {
   const since = Math.floor(Date.now() / 3_600_000) - 1;
@@ -29,7 +56,25 @@ app.get("/api/trending", (c) => {
   );
 });
 
+/** Per-IP token bucket, in memory. Without it a bot floods the pending list, which is
+ *  public and ordered so that a flood pushes the real entries off the end. */
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = Number(process.env.RATE_MAX ?? 5);
+const rateBuckets = new Map<string, number[]>();
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const hits = (rateBuckets.get(ip) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  hits.push(now);
+  rateBuckets.set(ip, hits);
+  if (rateBuckets.size > 10_000) rateBuckets.clear(); // crude cap; the window makes it self-healing
+  return hits.length > RATE_MAX;
+}
+
 app.post("/api/listings", async (c) => {
+  const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  if (rateLimited(ip)) return c.json({ error: "slow down" }, 429);
+
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ error: "invalid json" }, 400);
   try {
@@ -60,6 +105,20 @@ app.patch("/api/listings/:id", async (c) => {
   }
 });
 
+/** Takedown. The board is public and the reference site bans adult content; without
+ *  this the only remedy is editing SQLite by hand. */
+app.delete("/api/listings/:id", (c) => {
+  if (!ADMIN_TOKEN || c.req.header("x-admin-token") !== ADMIN_TOKEN) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const id = c.req.param("id");
+  const listing = getListing(id);
+  if (!listing) return c.json({ error: "not found" }, 404);
+  db.query(`DELETE FROM listings WHERE id = ?`).run(id);
+  log("listing_removed", { id, target: listing.target });
+  return c.json({ removed: id });
+});
+
 app.get("/api/listings/:id", (c) => {
   const listing = getListing(c.req.param("id"));
   return listing ? c.json(listing) : c.json({ error: "not found" }, 404);
@@ -85,23 +144,24 @@ app.get("*", async (c) => {
 
 startLoops();
 
-const server = Bun.serve<{ client: Client }, {}>({
+const server = Bun.serve<SocketData>({
   port: Number(process.env.PORT ?? 3000),
   fetch(req, srv) {
     if (new URL(req.url).pathname === "/ws") {
-      return srv.upgrade(req, { data: {} }) ? undefined : new Response("upgrade failed", { status: 400 });
+      const data: SocketData = { client: null };
+      return srv.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
     return app.fetch(req);
   },
   websocket: {
     open(ws) {
-      (ws.data as any).client = addClient(ws as ServerWebSocket<any>);
+      ws.data.client = addClient(ws);
     },
     message(ws, msg) {
-      handleMessage((ws.data as any).client, String(msg));
+      if (ws.data.client) handleMessage(ws.data.client, String(msg));
     },
     close(ws) {
-      removeClient((ws.data as any).client);
+      if (ws.data.client) removeClient(ws.data.client);
     },
   },
 });
@@ -114,4 +174,4 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-console.log(`outmine on http://localhost:${server.port}  pool=${process.env.POOL_HOST ?? "minotaurx.mine.zpool.ca"}`);
+log("started", { port: server.port, pool: process.env.POOL_HOST ?? "minotaurx.mine.zpool.ca" });

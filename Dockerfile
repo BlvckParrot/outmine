@@ -9,8 +9,10 @@ FROM oven/bun:1 AS web
 WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile || bun install
-COPY vite.config.ts ./
+COPY vite.config.ts tsconfig.json ./
 COPY web ./web
+# The frontend imports src/protocol.ts, the shared WebSocket contract.
+COPY src ./src
 COPY --from=wasm /build/web/public/ ./web/public/
 RUN bun run build:web
 

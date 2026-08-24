@@ -1,21 +1,28 @@
 // One worker = one mining thread. Each gets its own WASM instance and its own
 // slice of the nonce space, so threads never duplicate work on the same job.
+import type { OutmineModule } from "../../wasm/module";
+
 type Job = { jobId: string; header: string; target: string };
 
 const CHUNK = 2_000; // nonces per call: long enough to amortise the call, short enough to stay responsive
 const unhex = (s: string) => Uint8Array.from(s.match(/../g)!.map((b) => parseInt(b, 16)));
 
-let Module: any;
+let Module: OutmineModule;
 let job: Job | null = null;
 let nonce = 0;
 let throttle = 0; // 0 = flat out, 0.8 = idle 80% of the time
 let running = false;
 
 // Loaded at runtime from web/public, not bundled: emscripten's glue resolves
-// mine.wasm relative to itself and Vite must not rewrite that path.
-const ready = import(/* @vite-ignore */ "/mine.mjs")
-  .then((mod: any) => mod.default())
-  .then((m: any) => {
+// mine.wasm relative to itself and Vite must not rewrite that path. The URL goes
+// through a variable so TypeScript does not try to resolve it either.
+const WASM_URL = "/mine.mjs";
+
+const ready = (import(/* @vite-ignore */ WASM_URL) as Promise<{
+  default: () => Promise<OutmineModule>;
+}>)
+  .then((mod) => mod.default())
+  .then((m) => {
   Module = m;
   return {
     header: m._malloc(80),

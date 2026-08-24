@@ -82,7 +82,6 @@ export function createListing(input: {
     throw err;
   }
 
-  logEvent("listed", id, { name, target });
   return { listing: getListing(id)!, editToken };
 }
 
@@ -124,10 +123,6 @@ export const getPending = (limit = 20) =>
     `SELECT id, kind, target, name, tagline, created_at, clicks, shares, score
      FROM listings WHERE visible = 0 ORDER BY shares DESC, created_at DESC LIMIT ?`,
   ).all(limit) as Listing[];
-
-export const logEvent = (type: string, listingId: string | null, payload: unknown = {}) =>
-  db.query(`INSERT INTO events (ts, type, listing_id, payload) VALUES (?, ?, ?, ?)`)
-    .run(Date.now(), type, listingId, JSON.stringify(payload));
 
 const hashToken = (token: string) =>
   new Bun.CryptoHasher("sha256").update(token).digest("hex");

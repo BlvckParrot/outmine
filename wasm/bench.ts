@@ -1,6 +1,6 @@
 // Measures single-thread WASM hashrate and converts it to what zpool pays.
 // Run: bun wasm/bench.ts
-import createModule from "./build/mine.mjs";
+import { createModule } from "./module";
 
 const NONCES = 3000;
 const Module = await createModule();

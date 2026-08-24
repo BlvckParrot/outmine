@@ -28,6 +28,22 @@ progress bar. They have to be — a gate that hides listings from the very peopl
 would mine them onto the board is a wall, and a fresh install would have nothing to
 mine for at all.
 
+## Pool connections
+
+Miners share pool sockets, 16 to a socket. Neither extreme works: one socket per miner
+means a few hundred TCP connections from one IP and a ban, while a single shared socket
+runs into zpool's vardiff, which targets 5-15 submits per minute *per connection*. That
+would cap the whole site at 5-15 shares a minute however many people mine - scoring
+stays right on average, but a newcomer can mine five minutes and see zero, which is the
+only feedback the game has.
+
+Each miner on a socket gets its own extranonce2, so no two build the same header, and
+submit replies are routed back by stratum request id. Without that routing the credit
+lands on whoever happens to be next on the socket, and the totals still look plausible.
+
+Connections reconnect on their own with exponential backoff. extranonce1 changes on
+reconnect, so every header is rebuilt rather than reused.
+
 ## Abuse guard
 
 A client can spray random nonces instead of hashing. That is not a shortcut: at this
@@ -63,14 +79,33 @@ compete on gets a tab left open for hours.
 costs the same as a whole minotaurx hash, so both algorithms run at the same speed in
 a browser and minotaurx simply pays 1.4x more. Re-check with `bun scripts/rank-algos.ts`.
 
+## Before deploying
+
+Set `POOL_USER` to your payout address. The server refuses to start without it - mining
+to an empty address credits nobody and nothing else would complain.
+
+Back up the database on a schedule:
+
+```
+0 4 * * *  cd /srv/outmine && docker compose exec -T app bun scripts/backup.ts
+```
+
+`ADMIN_TOKEN` enables `DELETE /api/listings/:id`, the only way to take a listing down
+short of editing SQLite by hand.
+
 ## Layout
 
 ```
 wasm/          MinotaurX hasher, compiled from cpuminer-multi with emcc
 src/           Bun server: Hono API, stratum client, mining hub, SQLite
+src/protocol.ts  the WebSocket contract, imported by both server and browser
 web/           Vite + React frontend and the mining web worker
-scripts/       spikes and the algorithm ranking helper
+scripts/       backup, browser check, algorithm ranking
 ```
+
+One process, one SQLite file, one runtime dependency (`hono`). No workspaces: there is
+nothing here that is versioned or deployed separately, so there are no boundaries for a
+monorepo to manage.
 
 The WASM exports one function, `mine(header, target, nonceStart, nonceEnd)`. The nonce
 loop lives in C because crossing the JS/WASM boundary per hash costs more than a hash.
@@ -93,13 +128,16 @@ SQLite lives in a bind mount.
 ## Tests
 
 ```bash
-bun test                                  # hash vectors, header assembly, normalizer
+bun run check             # typecheck, then hash vectors, framing, header assembly, normalizer
 POOL_USER=<addr> bun test src/hub.integration.test.ts   # real shares against zpool
+BASE=http://localhost:3000 bun scripts/browser-check.ts # consent, mine, shares land
 ```
 
-The hash vector test is the important one: it pins the WASM build against the native
-build of the same C. A mismatch there does not raise an error, it just makes the pool
-discard every share while everything looks healthy.
+Two tests carry most of the weight. The hash vector test pins the WASM build against
+the native build of the same C: a mismatch raises no error, it just makes the pool
+discard every share while everything looks healthy. The multiplex test checks that two
+miners on one socket get different headers and that each accepted share lands on the
+right listing - crossed credit is silent and the totals still look plausible.
 
 ## Licence
 
