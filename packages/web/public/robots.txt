@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# Click-counting redirects. Rank here is bought with CPU time, so every outbound
+# link is paid placement and must not be crawled as an editorial one.
+Disallow: /r/

@@ -3,6 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- The server replaces this marker before serving. It comes first on purpose:
+         parsers take the first title and the first og:* they meet, so the injected
+         per-listing tags have to precede the generic ones below. Left in place when
+         Vite serves this file directly in development, where nothing crawls it. -->
+    <!--og-->
+
     <title>outmine — the board you pay for with CPU</title>
     <meta name="description" content="A public leaderboard where rank is bought with browser mining instead of money." />
 
@@ -11,7 +18,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="outmine" />
     <meta property="og:description" content="A leaderboard you cannot buy. Rank is paid in CPU time - pick a listing and mine for it." />
-    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#0a0a0b" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>

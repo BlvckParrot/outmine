@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { normalizeTarget } from "./listings";
+import { likePattern, normalizeTarget } from "./listings";
 
 test.each([
   // input                                    -> canonical
@@ -44,4 +44,15 @@ test.each([["@a b", "invalid"], ["", "invalid"], ["@" + "x".repeat(60), "invalid
 
 test("query stripping cannot be bypassed by a second question mark", () => {
   expect(normalizeTarget("domain", "https://example.com/a??utm=1")).toBe("example.com/a");
+});
+
+test.each([
+  // a search for a wildcard must look for that character, not match everything
+  ["%", "%\\%%"],
+  ["_", "%\\_%"],
+  ["100%_off", "%100\\%\\_off%"],
+  ["c:\\dev", "%c:\\\\dev%"], // the escape character itself needs escaping first
+  ["acme", "%acme%"],
+])("search %j becomes the LIKE pattern %j", (input, expected) => {
+  expect(likePattern(input)).toBe(expected);
 });

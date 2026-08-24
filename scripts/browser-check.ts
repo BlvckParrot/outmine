@@ -41,6 +41,42 @@ for (let i = 0; i < 10; i++) {
 await page.screenshot({ path: `${SHOT}/02-mining.png` });
 const finalAccepted = Number(await readStat("accepted"));
 const finalHashrate = await readStat("hashrate");
+
+// The board must show that somebody is on this listing. The number comes from the hub
+// counting sockets, so a mismatch here means the snapshot and reality have drifted.
+const minersShown = await page.locator("ol li", { hasText: /\d+ mining/ }).count();
+console.log(`miners shown on a row: ${minersShown > 0}`);
+
+// Navigating must not stop mining. The socket and the workers live in the shell, so a
+// page that owned them - the obvious structure - would silently kill the miner here.
+await page.getByRole("link", { name: "about", exact: true }).click();
+await page.waitForTimeout(4000);
+const onAbout = page.url().endsWith("/about");
+const stillMining = await page.getByText(/mining for/).isVisible();
+const acceptedAfterNav = Number(await readStat("accepted"));
+console.log(`navigated to /about: ${onAbout}  still mining: ${stillMining}  accepted ${finalAccepted} -> ${acceptedAfterNav}`);
+await page.screenshot({ path: `${SHOT}/03-about-while-mining.png` });
+
+// A reload must not ask for consent again, and must offer the last listing back
+// without starting anything on its own.
+await page.goto(BASE, { waitUntil: "networkidle" });
+await page.waitForTimeout(2000);
+const bannerBack = await page.getByRole("button", { name: /I understand/i }).isVisible().catch(() => false);
+const resumeOffered = await page.getByRole("button", { name: /pick up where you left off/i }).isVisible();
+const miningOnLoad = await page.getByText(/mining for/).isVisible().catch(() => false);
+console.log(`after reload: consent asked again=${bannerBack}  resume offered=${resumeOffered}  mining started by itself=${miningOnLoad}`);
+await page.screenshot({ path: `${SHOT}/04-returning-visitor.png` });
+
+const checks = {
+  accepted: finalAccepted > 0,
+  minersShown: minersShown > 0,
+  survivedNavigation: onAbout && stillMining && acceptedAfterNav >= finalAccepted,
+  consentRemembered: !bannerBack,
+  resumeOffered,
+  // The one that matters most: a stored consent buys us the banner, not the CPU.
+  didNotAutostart: !miningOnLoad,
+};
 console.log(`\nRESULT accepted=${finalAccepted} hashrate=${finalHashrate}`);
+for (const [name, ok] of Object.entries(checks)) console.log(`  ${ok ? "ok  " : "FAIL"} ${name}`);
 await browser.close();
-process.exit(finalAccepted > 0 ? 0 : 1);
+process.exit(Object.values(checks).every(Boolean) ? 0 : 1);

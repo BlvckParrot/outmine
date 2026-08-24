@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@outmine/protocol": "workspace:*",
+    "@resvg/resvg-js": "^2.6.2",
     "hono": "^4.13.3"
   },
   "devDependencies": {

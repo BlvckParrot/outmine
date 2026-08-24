@@ -28,6 +28,40 @@ progress bar. They have to be — a gate that hides listings from the very peopl
 would mine them onto the board is a wall, and a fresh install would have nothing to
 mine for at all.
 
+## Two boards, one table
+
+All-time score never decays, which is the right rule for a leaderboard and a bad one
+for anybody arriving late: the launch week would own the top forever. The 24h tab
+scores the same listings by what was mined for them today, and it is a `WHERE` clause
+rather than a second table — the flush loop already writes hourly buckets to
+`share_buckets`.
+
+Search and paging live on `/api/board` too. The WebSocket only ever pushes the
+unfiltered top of the board, so as soon as a filter is on, the client stops applying
+those pushes and drives the list over HTTP instead. Otherwise the next broadcast
+overwrites what the visitor asked for with the default list.
+
+## Sharing
+
+outbid.lol grew because every lost position was a reason to post, and every post had
+somewhere to point. The equivalent here:
+
+- `/l/:id` — a listing's own page, and the URL a share points at.
+- `/og/:id.png` — the link preview card, drawn as SVG and rasterised with resvg.
+  It has to be a raster: X, Slack and Facebook all refuse an SVG as `og:image`.
+- `/badge/:id.svg` — a shields-style badge for a README, with the copyable snippet on
+  the listing page.
+- Per-listing `og:` tags are stitched into `index.html` by the server, because a
+  crawler runs no JavaScript and the SPA would hand it the generic ones.
+
+The bundled font is passed to resvg explicitly and system fonts are switched off. A
+slim container has no fonts installed, so relying on fontconfig produces a card that
+looks right in development and is blank in production.
+
+`PUBLIC_ORIGIN` matters here and nowhere else: `og:image` must be absolute, and behind
+Caddy the hop to the app is plain http, so a URL derived from the request would
+advertise the card over http and the preview would be dropped.
+
 ## Pool connections
 
 Miners share pool sockets, 16 to a socket. Neither extreme works: one socket per miner
@@ -126,21 +160,30 @@ policy below.
 ```
 packages/protocol/   the WebSocket contract, imported by both server and browser
 packages/wasm/       MinotaurX hasher, compiled from cpuminer-multi with emcc
-packages/web/        Vite + React frontend and the mining web worker
+packages/web/
+  App.tsx            the shell: one socket, one miner, whichever page the URL names
+  router.ts          twelve lines of pushState; six paths do not need a dependency
+  session.ts         what pages read from the live connection
+  pages/             home, listing, stats, about, rules, faq
+  components/        board rows, consent, mining panel, submit form, trending
+  miner.worker.ts    the hashing worker
 packages/server/
   config.ts          every tunable, validated at startup
   security.ts        origin policy, client address, constant-time comparison
   routes.ts          the HTTP surface
   server.ts          socket wiring, the upgrade gate, shutdown
   hub.ts             clients, pool connections, scoring, the board
+  cards.ts           the share card and the badge
+  assets/            JetBrains Mono, shipped so the card renders in a slim container
   stratum.ts         one pool connection: framing, submits, reconnect
   blockheader.ts     stratum job -> the 80 bytes the miner hashes
-  listings.ts        target normalisation, the listings table
+  listings.ts        target normalisation, board queries, the listings table
 scripts/             backup, browser check, algorithm ranking
 ```
 
-Bun workspaces. Still one deployed process, one SQLite file and one runtime dependency
-(`hono`); the split is about keeping the boundaries honest — the browser cannot reach
+Bun workspaces. Still one deployed process and one SQLite file; two runtime
+dependencies (`hono` and `@resvg/resvg-js`, the latter only to turn a share card into
+a PNG). The split is about keeping the boundaries honest — the browser cannot reach
 into server code, and the shared contract is a package rather than a relative path.
 
 The WASM exports one function, `mine(header, target, nonceStart, nonceEnd)`. The nonce
@@ -192,6 +235,10 @@ INTEGRATION=1 bun test packages/server/src/hub.integration.test.ts
 
 BASE=http://localhost:5173 bun scripts/browser-check.ts  # consent, mine, shares land
 ```
+
+`browser-check.ts` covers what no unit test can reach: that navigating to another page
+does not stop mining, that a returning visitor is not asked to consent twice, and — the
+one that matters — that a stored consent still does not start the CPU by itself.
 
 Two tests carry most of the weight. The hash vector test pins the WASM build against
 the native build of the same C: a mismatch raises no error, it just makes the pool

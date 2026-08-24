@@ -160,3 +160,103 @@ const newListingId = () => crypto.randomUUID().replaceAll("-", "").slice(0, 12);
  *  to brute force and no need for a password KDF. */
 const hashToken = (token: string) =>
   new Bun.CryptoHasher("sha256").update(token).digest("hex");
+
+
+// --- board pages ----------------------------------------------------------------
+
+export type BoardWindow = "all" | "24h";
+
+export type BoardQuery = {
+  /** "24h" scores a listing by what was mined for it in the last day instead of
+   *  since it was created. Without it the board settles: a listing from launch week
+   *  can sit on top forever while nobody mines for it any more. */
+  window?: BoardWindow;
+  q?: string;
+  offset?: number;
+  limit?: number;
+  /** 1 is the board, 0 is the queue waiting on the proof-of-work gate. A search that
+   *  covered only the board would hide exactly the listings that most need someone
+   *  to find them and mine for them. */
+  visible?: 0 | 1;
+};
+
+export type BoardPage = { rows: Listing[]; total: number };
+
+/** LIKE treats % and _ as wildcards, so a search for "%" would match every row and a
+ *  search for a literal underscore would match any character. SQLite has no built-in
+ *  quoting for this; the pattern is escaped by hand and the query declares the
+ *  escape character.
+ *
+ *  Exported only so the escaping has a test of its own: getBoardPage needs a database
+ *  and this is the part that goes wrong silently. */
+export const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+
+/** The board, filtered and paged. `getBoard` above stays as it is: the hub broadcasts
+ *  the unfiltered top of the board on a timer and has no use for any of this. */
+export function getBoardPage(query: BoardQuery = {}): BoardPage {
+  const limit = Math.min(Math.max(query.limit ?? config.board.entries, 1), config.board.entries);
+  const offset = Math.max(query.offset ?? 0, 0);
+  const search = (query.q ?? "").trim();
+  const pattern = search ? likePattern(search) : null;
+  const visible = query.visible ?? 1;
+
+  const filter = pattern
+    ? `AND (l.name LIKE $pattern ESCAPE '\\' OR l.target LIKE $pattern ESCAPE '\\')`
+    : "";
+
+  const { n: total } = db.query(
+    `SELECT COUNT(*) AS n FROM listings l WHERE l.visible = $visible ${filter}`,
+  ).get({ $visible: visible, ...(pattern ? { $pattern: pattern } : {}) }) as { n: number };
+
+  const page = {
+    $limit: limit,
+    $offset: offset,
+    $visible: visible,
+    ...(pattern ? { $pattern: pattern } : {}),
+  };
+
+  // The queue is ranked by how close each entry is to the gate, the board by score.
+  // Sorting the queue by score would put every brand new listing in one indistinct
+  // block at the bottom, which is where nobody looks.
+  // In the 24h branch score and shares are aggregate aliases, so they cannot carry the
+  // table prefix the plain branch needs. Two strings rather than one clever one.
+  const orderAggregate = visible === 1 ? "score DESC, l.created_at ASC" : "shares DESC, l.created_at DESC";
+  const orderPlain = visible === 1 ? "l.score DESC, l.created_at ASC" : "l.shares DESC, l.created_at DESC";
+
+  if (query.window === "24h") {
+    // One row per listing either way: the LEFT JOIN fans out over buckets and the
+    // GROUP BY folds them back, so the count above still describes this set.
+    const since = Math.floor(Date.now() / 3_600_000) - 23;
+    const rows = db.query(
+      `SELECT l.id, l.kind, l.target, l.name, l.tagline, l.created_at, l.visible, l.clicks,
+              COALESCE(SUM(b.shares), 0) AS shares,
+              COALESCE(SUM(b.diff_sum), 0) AS score
+       FROM listings l
+       LEFT JOIN share_buckets b ON b.listing_id = l.id AND b.hour >= $since
+       WHERE l.visible = $visible ${filter}
+       GROUP BY l.id
+       ORDER BY ${orderAggregate}
+       LIMIT $limit OFFSET $offset`,
+    ).all({ ...page, $since: since }) as Listing[];
+    return { rows, total };
+  }
+
+  const rows = db.query(
+    `SELECT ${PUBLIC_COLUMNS.split(", ").map((c) => `l.${c}`).join(", ")}
+     FROM listings l WHERE l.visible = $visible ${filter}
+     ORDER BY ${orderPlain}
+     LIMIT $limit OFFSET $offset`,
+  ).all(page) as Listing[];
+  return { rows, total };
+}
+
+/** Where a listing sits on the all-time board. Ties go to the older entry, matching
+ *  `getBoard`'s ordering - a rank that disagreed with the list it labels would be
+ *  worse than no rank at all. */
+export function listingRank(listing: Pick<Listing, "score" | "created_at">): number {
+  const { n } = db.query(
+    `SELECT COUNT(*) AS n FROM listings
+     WHERE visible = 1 AND (score > $score OR (score = $score AND created_at < $created))`,
+  ).get({ $score: listing.score, $created: listing.created_at }) as { n: number };
+  return n + 1;
+}

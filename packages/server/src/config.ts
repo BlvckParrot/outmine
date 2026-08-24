@@ -49,6 +49,15 @@ export const config = {
    *  directory, so it names one database however the server was launched. */
   dbPath: rootRelative(str("DB_PATH", "data/outmine.sqlite")),
 
+  /** Absolute origin this site is reached at, e.g. https://outmine.example.
+   *
+   *  Only needed for the tags a crawler reads: og:image and og:url have to be
+   *  absolute, and a share card is fetched by a machine that never saw the request
+   *  that produced the page. Empty falls back to the requesting Host header, which is
+   *  right in development and behind a well-behaved proxy, and wrong the moment
+   *  anything forwards a Host we do not control. */
+  publicOrigin: (process.env.PUBLIC_ORIGIN?.trim() ?? "").replace(/\/$/, ""),
+
   /** Where the frontend build lives. Resolved from this file so any working directory
    *  works; the image overrides it when the layout differs. */
   webDist: process.env.WEB_DIST?.trim() || new URL("../../web/dist", import.meta.url).pathname,

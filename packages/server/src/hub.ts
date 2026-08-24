@@ -56,6 +56,7 @@ const unflushed = new Map<string, { shares: number; diffSum: number }>();
 const feed: { ts: number; text: string }[] = [];
 
 export const clientCount = () => clients.size;
+export const miningCount = () => [...clients].filter((c) => c.listingId).length;
 export const connectionCount = () => connections.size;
 export const poolHealthy = () => [...connections].every((c) => c.stratum.connected);
 
@@ -301,8 +302,11 @@ function creditShare(client: Client, difficulty: number) {
 
 function boardSnapshot(): BoardSnapshot {
   const hashrates = new Map<string, number>();
+  const miners = new Map<string, number>();
   for (const c of clients) {
-    if (c.listingId) hashrates.set(c.listingId, (hashrates.get(c.listingId) ?? 0) + c.hashrate);
+    if (!c.listingId) continue;
+    hashrates.set(c.listingId, (hashrates.get(c.listingId) ?? 0) + c.hashrate);
+    miners.set(c.listingId, (miners.get(c.listingId) ?? 0) + 1);
   }
 
   // Counters not yet flushed are added in, otherwise a share takes up to the flush
@@ -310,6 +314,7 @@ function boardSnapshot(): BoardSnapshot {
   const live = (entry: ReturnType<typeof getBoard>[number]) => ({
     ...entry,
     hashrate: Math.round(hashrates.get(entry.id) ?? 0),
+    miners: miners.get(entry.id) ?? 0,
     shares: entry.shares + (unflushed.get(entry.id)?.shares ?? 0),
     score: entry.score + (unflushed.get(entry.id)?.diffSum ?? 0),
   });
@@ -319,7 +324,7 @@ function boardSnapshot(): BoardSnapshot {
     pending: getPending().map(live),
     threshold: config.board.visibilityThreshold,
     online: clients.size,
-    mining: [...clients].filter((c) => c.listingId).length,
+    mining: miningCount(),
     feed: feed.slice(-config.board.feedEntries),
   };
 }

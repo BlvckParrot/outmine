@@ -8,6 +8,10 @@ services:
       # the client address is the last X-Forwarded-For entry. Left unset, the rate
       # limiter would see Caddy's address for everyone and limit the whole site as one.
       TRUSTED_PROXIES: 1
+      # Caddy forwards the original Host but the hop to the app is plain http, so a
+      # URL derived from the request would advertise og:image over http and X would
+      # drop the preview. Derived from SITE_ADDRESS unless set explicitly.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${SITE_ADDRESS}}
     volumes:
       - ./data:/app/data
     expose:
