@@ -3,6 +3,11 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Caddy is always the single hop in front of the app in this compose file, so
+      # the client address is the last X-Forwarded-For entry. Left unset, the rate
+      # limiter would see Caddy's address for everyone and limit the whole site as one.
+      TRUSTED_PROXIES: 1
     volumes:
       - ./data:/app/data
     expose:

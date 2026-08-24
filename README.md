@@ -96,19 +96,46 @@ short of editing SQLite by hand.
 `ALLOWED_ORIGINS` is a security control, not a convenience. The mining socket accepts
 any browser that reaches it, so without an origin policy another site could run
 `new WebSocket("wss://your-host/ws")` and mine on its own visitors' CPUs against your
-pool account, skipping the consent banner entirely. Left empty, only same-origin
-requests are accepted, so an unconfigured deployment is closed rather than open. A
-missing `Origin` header is allowed through: browsers always send one on a WebSocket
-handshake, so the guard still holds, and non-browser clients have nobody else's CPU to
-spend.
+pool account, skipping the consent banner entirely.
+
+Same-origin is always allowed and the list only *adds* origins - the dev server, a
+second domain. It is not the complete set, so naming a dev origin and forgetting your
+own domain cannot take the site down. A missing `Origin` header is allowed through:
+browsers always send one on a WebSocket handshake, so the guard still holds, and
+non-browser clients have nobody else's CPU to spend.
+
+`TRUSTED_PROXIES` decides where the client address comes from. `X-Forwarded-For` is
+appended to by each hop, so with one proxy the real address is the *last* entry.
+Reading the first entry - the obvious way - lets anyone forge an address and walk past
+the rate limit with a single header, so at `0` the header is ignored entirely and the
+socket address is used. The bundled compose file sets it to `1` for Caddy.
+
+## Configuration
+
+Every tunable lives in `packages/server/src/config.ts` and is validated at startup:
+a mistyped number stops the server with the name of the offending variable instead of
+quietly becoming `NaN`. `.env.example` lists all of them with their defaults.
+
+Only `POOL_USER` is required. The rest have defaults that work, and the ones worth
+knowing about are the visibility threshold (`VISIBILITY_THRESHOLD`, 600 shares),
+the pool grouping (`MINERS_PER_CONNECTION`, `MAX_POOL_CONNECTIONS`) and the origin
+policy below.
 
 ## Layout
 
 ```
 packages/protocol/   the WebSocket contract, imported by both server and browser
 packages/wasm/       MinotaurX hasher, compiled from cpuminer-multi with emcc
-packages/server/     Bun server: Hono API, stratum client, mining hub, SQLite
 packages/web/        Vite + React frontend and the mining web worker
+packages/server/
+  config.ts          every tunable, validated at startup
+  security.ts        origin policy, client address, constant-time comparison
+  routes.ts          the HTTP surface
+  server.ts          socket wiring, the upgrade gate, shutdown
+  hub.ts             clients, pool connections, scoring, the board
+  stratum.ts         one pool connection: framing, submits, reconnect
+  blockheader.ts     stratum job -> the 80 bytes the miner hashes
+  listings.ts        target normalisation, the listings table
 scripts/             backup, browser check, algorithm ranking
 ```
 

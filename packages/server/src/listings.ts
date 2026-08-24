@@ -1,4 +1,6 @@
+import { config } from "./config";
 import { db, type Listing } from "./db";
+import { cleanText, secretsMatch } from "./security";
 
 // Rule borrowed from outbid.lol: the board links to the real thing, not to a
 // tracker. Query strings are stripped, link shorteners are refused.
@@ -8,28 +10,36 @@ const SHORTENERS = new Set([
 ]);
 const HANDLE_HOSTS = new Set(["x.com", "www.x.com", "twitter.com", "www.twitter.com"]);
 
+/** Columns safe to hand to a client. Never `SELECT *`: that table also holds
+ *  edit_token_hash, and the Listing type does not mention it, so a leak through a
+ *  route would typecheck cleanly and go unnoticed. */
+const PUBLIC_COLUMNS = "id, kind, target, name, tagline, created_at, visible, clicks, shares, score";
+
 export class TargetError extends Error {}
 
 export function normalizeTarget(kind: "domain" | "handle", raw: string): string {
   const input = raw.trim();
   if (!input) throw new TargetError("empty target");
+  return kind === "handle" ? normalizeHandle(input) : normalizeDomain(input);
+}
 
-  if (kind === "handle") {
-    // Accept a bare handle, an @handle, or a link to the profile.
-    let handle = input;
-    if (/^https?:\/\//i.test(input)) {
-      const url = parseUrl(input);
-      if (!HANDLE_HOSTS.has(url.hostname.toLowerCase())) throw new TargetError("not an x.com profile");
-      handle = url.pathname.replace(/^\/+/, "");
-    }
-    handle = handle.replace(/^@/, "").toLowerCase();
-    if (!/^[a-z0-9_]{1,15}$/.test(handle)) throw new TargetError("invalid handle");
-    return handle;
+function normalizeHandle(input: string): string {
+  // Accept a bare handle, an @handle, or a link to the profile.
+  let handle = input;
+  if (/^https?:\/\//i.test(input)) {
+    const url = parseUrl(input);
+    if (!HANDLE_HOSTS.has(url.hostname.toLowerCase())) throw new TargetError("not an x.com profile");
+    handle = url.pathname.replace(/^\/+/, "");
   }
+  handle = handle.replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9_]{1,15}$/.test(handle)) throw new TargetError("invalid handle");
+  return handle;
+}
 
-  // No separate affiliate rule: dropping the query string below already removes
-  // every ?tag=/?ref= tracker. Shorteners are the only case stripping cannot fix,
-  // because the tracking lives in the redirect rather than the URL.
+function normalizeDomain(input: string): string {
+  // No separate affiliate rule: dropping the query string below already removes every
+  // ?tag=/?ref= tracker. Shorteners are the only case stripping cannot fix, because
+  // the tracking lives in the redirect rather than the URL.
   const url = parseUrl(/^https?:\/\//i.test(input) ? input : `https://${input}`);
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
   if (SHORTENERS.has(host)) throw new TargetError("link shortener");
@@ -37,8 +47,7 @@ export function normalizeTarget(kind: "domain" | "handle", raw: string): string 
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) throw new TargetError("invalid domain");
   if (/^\d+(\.\d+)*$/.test(host)) throw new TargetError("invalid domain");
 
-  const path = url.pathname.replace(/\/+$/, "");
-  return host + path;
+  return host + url.pathname.replace(/\/+$/, "");
 }
 
 function parseUrl(candidate: string): URL {
@@ -52,9 +61,15 @@ function parseUrl(candidate: string): URL {
   return url;
 }
 
-// Shares needed before a listing shows up on the board. Costs a spammer the same
-// currency the game runs on, so no separate anti-spam machinery is needed.
-export const VISIBILITY_THRESHOLD = Number(process.env.VISIBILITY_THRESHOLD ?? 600);
+function checkedName(raw: string): string {
+  const name = cleanText(raw).slice(0, config.board.maxNameLength);
+  // cleanText can empty a string that looked non-empty: a name of pure zero-width
+  // characters would render as a blank row on the board.
+  if (!name) throw new TargetError("name required");
+  return name;
+}
+
+const checkedTagline = (raw: string) => cleanText(raw).slice(0, config.board.maxTaglineLength);
 
 export type CreateResult = { listing: Listing; editToken: string };
 
@@ -64,25 +79,35 @@ export function createListing(input: {
   name: string;
   tagline?: string;
 }): CreateResult {
+  if (input.kind !== "domain" && input.kind !== "handle") throw new TargetError("invalid kind");
+
   const target = normalizeTarget(input.kind, input.target);
-  const name = input.name.trim().slice(0, 60);
-  if (!name) throw new TargetError("name required");
-  const tagline = (input.tagline ?? "").trim().slice(0, 200);
-
-  const id = crypto.randomUUID().slice(0, 8);
+  const name = checkedName(input.name);
+  const tagline = checkedTagline(input.tagline ?? "");
   const editToken = crypto.randomUUID();
+  const tokenHash = hashToken(editToken);
 
-  try {
-    db.query(
-      `INSERT INTO listings (id, kind, target, name, tagline, created_at, edit_token_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, input.kind, target, name, tagline, Date.now(), hashToken(editToken));
-  } catch (err) {
-    if (String(err).includes("UNIQUE")) throw new TargetError("already listed");
-    throw err;
+  const insert = db.query(
+    `INSERT INTO listings (id, kind, target, name, tagline, created_at, edit_token_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  // Two different UNIQUE constraints live on this table. A duplicate target is the
+  // user's problem; a duplicate id is ours, and retrying is the fix. Telling a user
+  // "already listed" because two random ids collided would be a lie.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const id = newListingId();
+    try {
+      insert.run(id, input.kind, target, name, tagline, Date.now(), tokenHash);
+      return { listing: getListing(id)!, editToken };
+    } catch (err) {
+      const message = String(err);
+      if (!message.includes("UNIQUE")) throw err;
+      if (message.includes("listings.target")) throw new TargetError("already listed");
+      // otherwise: id collision, try another
+    }
   }
-
-  return { listing: getListing(id)!, editToken };
+  throw new Error("could not allocate a listing id");
 }
 
 export function updateListing(
@@ -94,35 +119,44 @@ export function updateListing(
     | { edit_token_hash: string }
     | null;
   if (!row) throw new TargetError("no such listing");
-  if (row.edit_token_hash !== hashToken(editToken)) throw new TargetError("bad edit token");
+  if (!secretsMatch(row.edit_token_hash, hashToken(editToken))) throw new TargetError("bad edit token");
 
   if (patch.name !== undefined) {
-    const name = patch.name.trim().slice(0, 60);
-    if (!name) throw new TargetError("name required");
-    db.query(`UPDATE listings SET name = ? WHERE id = ?`).run(name, id);
+    db.query(`UPDATE listings SET name = ? WHERE id = ?`).run(checkedName(patch.name), id);
   }
   if (patch.tagline !== undefined) {
-    db.query(`UPDATE listings SET tagline = ? WHERE id = ?`).run(patch.tagline.trim().slice(0, 200), id);
+    db.query(`UPDATE listings SET tagline = ? WHERE id = ?`).run(checkedTagline(patch.tagline), id);
   }
   return getListing(id)!;
 }
 
 export const getListing = (id: string) =>
-  db.query(`SELECT * FROM listings WHERE id = ?`).get(id) as Listing | null;
+  db.query(`SELECT ${PUBLIC_COLUMNS} FROM listings WHERE id = ?`).get(id) as Listing | null;
 
-export const getBoard = (limit = 50) =>
+export const deleteListing = (id: string) => db.query(`DELETE FROM listings WHERE id = ?`).run(id);
+
+export const getBoard = (limit = config.board.entries) =>
   db.query(
-    `SELECT id, kind, target, name, tagline, created_at, clicks, shares, score
-     FROM listings WHERE visible = 1 ORDER BY score DESC, created_at ASC LIMIT ?`,
+    `SELECT ${PUBLIC_COLUMNS} FROM listings WHERE visible = 1
+     ORDER BY score DESC, created_at ASC LIMIT ?`,
   ).all(limit) as Listing[];
 
 /** Listings still short of the gate. They must stay discoverable, otherwise nobody
  *  can mine them onto the board and the gate becomes a wall. */
-export const getPending = (limit = 20) =>
+export const getPending = (limit = config.board.pendingEntries) =>
   db.query(
-    `SELECT id, kind, target, name, tagline, created_at, clicks, shares, score
-     FROM listings WHERE visible = 0 ORDER BY shares DESC, created_at DESC LIMIT ?`,
+    `SELECT ${PUBLIC_COLUMNS} FROM listings WHERE visible = 0
+     ORDER BY shares DESC, created_at DESC LIMIT ?`,
   ).all(limit) as Listing[];
 
+export const listingExists = (id: string) =>
+  db.query(`SELECT 1 FROM listings WHERE id = ?`).get(id) !== null;
+
+/** 12 hex characters, 48 bits. The previous 8 gave a coin-flip chance of collision
+ *  around 77k listings, which is inside the range a board like this could reach. */
+const newListingId = () => crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+
+/** The token is a 122-bit random UUID, so a plain digest is enough; there is nothing
+ *  to brute force and no need for a password KDF. */
 const hashToken = (token: string) =>
   new Bun.CryptoHasher("sha256").update(token).digest("hex");
