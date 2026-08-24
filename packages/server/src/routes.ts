@@ -8,8 +8,8 @@ import { config } from "./config";
 import { dbAlive, type Listing } from "./db";
 import { clientCount, connectionCount, miningCount, poolHealthy, pushFeed } from "./hub";
 import {
-  boardTotals, countClick, createListing, deleteListing, getListing, listingRank,
-  searchBoard, TargetError, trending, updateListing,
+  boardTotals, countClick, createListing, deleteListing, getIcon, getListing, listingRank,
+  searchBoard, setIcon, TargetError, trending, updateListing,
 } from "./listings";
 import { log } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
@@ -23,7 +23,7 @@ export const app = new Hono<{ Bindings: RequestContext }>();
 app.use("/api/*", cors({
   origin: (origin, c) => (originAllowed(origin, c.req.url) ? origin : null),
   allowHeaders: ["content-type", "x-edit-token", "x-admin-token"],
-  allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }));
 
 app.onError((err, c) => {
@@ -138,6 +138,31 @@ app.patch("/api/listings/:id", async (c) => {
   }
 });
 
+/** The owner's own logo in place of the letter. Raw bytes rather than multipart or
+ *  base64: the browser sends exactly what it drew on its canvas, and there is nothing
+ *  else in the request to parse.
+ *
+ *  Both gates are here for different reasons. The token says whose listing it is; the
+ *  points say the row has earned the loudest thing on it, which is also what keeps an
+ *  upload form off a listing that anyone can create with one POST. */
+app.put("/api/listings/:id/icon", async (c) => {
+  const token = c.req.header("x-edit-token");
+  if (!token) return c.json({ error: "missing edit token" }, 401);
+
+  const declared = Number(c.req.header("content-length") ?? "0");
+  if (declared > config.limits.maxIconBytes) return c.json({ error: "icon too large" }, 413);
+
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  try {
+    const listing = setIcon(c.req.param("id"), token, bytes);
+    log("listing_icon_set", { id: listing.id, bytes: bytes.length });
+    return c.json({ ok: true });
+  } catch (err) {
+    if (err instanceof TargetError) return c.json({ error: err.message }, 400);
+    throw err;
+  }
+});
+
 /** Takedown. The board is public and the reference site bans adult content; without
  *  this the only remedy is editing SQLite by hand. */
 app.delete("/api/listings/:id", (c) => {
@@ -163,6 +188,19 @@ app.get("/api/listings/:id", (c) => {
     rank: listing.visible ? listingRank(listing) : null,
   };
   return c.json(detail);
+});
+
+/** The uploaded icon. Served from our own origin rather than linked from wherever the
+ *  owner keeps it: a remote URL on fifty rows tells fifty third parties who is reading
+ *  the board, and it breaks the moment that host does. */
+app.get("/icon/:id{.+\\.png}", (c) => {
+  const icon = getIcon(c.req.param("id").replace(/\.png$/, ""));
+  if (!icon) return c.notFound();
+  c.header("Content-Type", "image/png");
+  // Short: the URL does not change when the owner replaces the image, so this is how
+  // long a stale icon can survive.
+  c.header("Cache-Control", "public, max-age=60");
+  return c.body(icon as unknown as ArrayBuffer);
 });
 
 app.get("/r/:id", (c) => {

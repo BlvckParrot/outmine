@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Check, Copy, KeyRound, Pencil } from "lucide-react";
-import type { ListingDetail } from "@outmine/protocol";
+import { Check, Copy, ImageUp, KeyRound, Lock, Pencil } from "lucide-react";
+import { compact, ICON_MAX_PX, POINT_SCALE, type ListingDetail } from "@outmine/protocol";
 import { apiUrl, usePolled } from "../api";
 import { points } from "../format";
 import { linkProps } from "../router";
@@ -113,6 +113,7 @@ export function OwnedPanel({ id, token, onForget }: {
             {copied ? <Check className="size-3 text-live" /> : <Copy className="size-3" />}
             {copied ? "copied" : "copy edit token"}
           </button>
+          <IconButton id={id} token={token} listing={listing} min={board.iconMinPoints} />
           <button
             onClick={() => {
               if (confirm("Forget this listing? The edit token goes with it and cannot be shown again.")) {
@@ -192,5 +193,90 @@ function EditForm(props: {
         {error && <span className="text-destructive">{error}</span>}
       </div>
     </form>
+  );
+}
+
+/** The owner's own logo, once the listing has mined its way to it.
+ *
+ *  The picked file is redrawn onto a square canvas before it is sent, so the server
+ *  only ever receives a PNG of a known size whatever was chosen - and the visitor does
+ *  not upload a four megabyte photo to be shown at 56 pixels. The server re-checks the
+ *  bytes anyway; this is a convenience, not the gate. */
+function IconButton(props: {
+  id: string;
+  token: string;
+  listing: { score: number; has_icon: number };
+  min: number;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const earned = props.listing.score * POINT_SCALE;
+
+  if (earned < props.min) {
+    return (
+      <span className="flex items-center gap-1 text-muted-foreground">
+        <Lock className="size-3" />
+        icon at {compact(props.min)} pts · {points(props.listing.score)} so far
+      </span>
+    );
+  }
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(apiUrl(`/api/listings/${props.id}/icon`), {
+        method: "PUT",
+        headers: { "content-type": "image/png", "x-edit-token": props.token },
+        body: await square(file),
+      });
+      if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? `upload failed (${res.status})`);
+    } catch {
+      setError("could not read that image");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <label className="flex cursor-pointer items-center gap-1 rounded-full border border-border px-2.5 py-1 font-medium transition-colors hover:bg-muted">
+        <ImageUp className="size-3" />
+        {busy ? "uploading…" : props.listing.has_icon ? "replace icon" : "add an icon"}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          disabled={busy}
+          onChange={(e) => {
+            upload(e.target.files?.[0]);
+            e.target.value = ""; // so picking the same file twice still fires
+          }}
+        />
+      </label>
+      {error && <span className="text-destructive">{error}</span>}
+    </>
+  );
+}
+
+/** Any image the browser can decode, centre-cropped to a square PNG of ICON_MAX_PX. */
+async function square(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = ICON_MAX_PX;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+  ctx.drawImage(
+    bitmap,
+    (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
+    0, 0, ICON_MAX_PX, ICON_MAX_PX,
+  );
+  bitmap.close();
+
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("encode failed"))), "image/png"),
   );
 }

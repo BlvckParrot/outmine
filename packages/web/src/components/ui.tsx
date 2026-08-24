@@ -1,5 +1,6 @@
 // The pieces that were being written out again on every page that needed them.
 import type { BoardEntry } from "@outmine/protocol";
+import { apiUrl } from "../api";
 
 /** A number with its label. The mining panel, the stats page and a listing all show
  *  grids of these; they were three copies of the same markup.
@@ -26,19 +27,25 @@ const AVATAR_SIZE = {
   lg: "size-14 text-xl",
 } as const;
 
-/** The initial standing in for a logo. Neutral rather than a colour per listing: with
- *  one accent in the palette, thirty tinted squares are noise. */
+/** The owner's icon once they have earned one, and until then the initial. Neutral
+ *  rather than a colour per listing: with one accent in the palette, thirty tinted
+ *  squares are noise. */
 export const Avatar = ({ entry, size = "md", dim }: {
-  entry: Pick<BoardEntry, "target" | "name">;
+  entry: Pick<BoardEntry, "id" | "name" | "has_icon">;
   size?: keyof typeof AVATAR_SIZE;
   dim?: boolean;
 }) => (
   <span
-    className={`grid shrink-0 place-items-center rounded-md bg-muted font-semibold ${
+    className={`grid shrink-0 place-items-center overflow-hidden rounded-md bg-muted font-semibold ${
       AVATAR_SIZE[size]
     } ${dim ? "text-muted-foreground/60" : "text-muted-foreground"}`}
   >
-    {entry.name[0]?.toUpperCase()}
+    {entry.has_icon ? (
+      // Decorative: the name is right next to it in every place this is used.
+      <img src={apiUrl(`/icon/${entry.id}.png`)} alt="" className="size-full object-cover" />
+    ) : (
+      entry.name[0]?.toUpperCase()
+    )}
   </span>
 );
 

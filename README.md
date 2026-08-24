@@ -74,6 +74,26 @@ looks right in development and is blank in production.
 Caddy the hop to the app is plain http, so a URL derived from the request would
 advertise the card over http and the preview would be dropped.
 
+## Owning a listing
+
+Creating one returns an edit token, printed exactly once; only its SHA-256 is stored.
+The browser that created the listing keeps it under `outmine:owned` and pins that
+listing above every page - its queue progress, a button to mine for it, and an editor
+for the name and tagline over `PATCH /api/listings/:id`. Before that panel existed the
+token was a random string under a form and the route it unlocks had no caller.
+
+A listing can also carry its own icon in place of the letter avatar, once it has mined
+its way to `ICON_MIN_POINTS`. The gate is the point: a logo is the loudest thing on a
+row, and an upload form on a listing anyone can create with one POST is an invitation.
+The browser redraws whatever was picked onto a 128px canvas and `PUT`s the PNG, so the
+server receives a known size whatever was chosen - but it re-checks the bytes anyway,
+because the endpoint is reachable with curl. PNG only, judged by signature and IHDR
+rather than by a Content-Type the uploader chose: a dimension cap is what stops a few
+hundred bytes from decompressing into gigabytes, and SVG is refused outright because it
+is a scriptable document that would be served from our own origin. The bytes live in
+the row and are served from `/icon/:id.png`; no board query ever selects them, only a
+`has_icon` flag, or fifty rows would be a megabyte of snapshot every two seconds.
+
 ## The look
 
 The layout is outbid.lol's, deliberately: a status pill, a headline that names what
@@ -191,8 +211,8 @@ quietly becoming `NaN`. `.env.example` lists all of them with their defaults.
 
 Only `POOL_USER` is required. The rest have defaults that work, and the ones worth
 knowing about are the visibility threshold (`VISIBILITY_THRESHOLD`, 600 shares),
-the pool grouping (`MINERS_PER_CONNECTION`, `MAX_POOL_CONNECTIONS`) and the origin
-policy below.
+the icon gate (`ICON_MIN_POINTS`, 2000 points), the pool grouping
+(`MINERS_PER_CONNECTION`, `MAX_POOL_CONNECTIONS`) and the origin policy below.
 
 ## Layout
 

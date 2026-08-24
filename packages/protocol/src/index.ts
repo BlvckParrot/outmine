@@ -21,6 +21,10 @@ export type BoardEntry = {
   /** How many people are mining for this listing right now. Hashrate alone cannot
    *  say this: one machine with sixteen threads and sixteen visitors look alike. */
   miners: number;
+  /** 1 once the owner has uploaded an icon, so a row knows to fetch /icon/:id.png
+   *  instead of drawing the first letter. A flag rather than the bytes: fifty rows of
+   *  inlined PNG would be a megabyte of board snapshot every two seconds. */
+  has_icon: number;
 };
 
 export type FeedItem = { ts: number; text: string };
@@ -37,6 +41,10 @@ export type BoardSnapshot = {
   /** Page size the board is cut into, so the client can turn `total` into pages. */
   limit: number;
   threshold: number;
+  /** Points a listing must reach before its owner can upload an icon. Sent for the
+   *  same reason as `threshold`: the gate is the server's to set, and the owner has
+   *  to be told what they are mining towards. */
+  iconMinPoints: number;
   online: number;
   mining: number;
   feed: FeedItem[];
@@ -53,6 +61,12 @@ export type ClientMessage =
   | { t: "stop" }
   | { t: "share"; jobId: string; nonce: number }
   | { t: "hashrate"; hs: number };
+
+/** Longest side of an uploaded icon. The board draws it at 56 CSS pixels, so 128
+ *  covers a 2x display with nothing left over. The browser resizes to exactly this
+ *  before uploading and the server refuses anything larger - a dimension cap is what
+ *  stops a small file from decompressing into hundreds of megabytes. */
+export const ICON_MAX_PX = 128;
 
 /** Score is a sum of pool difficulties, around 0.000002 per share. Raw, every listing
  *  reads "0 pts"; scaled, one share is worth a couple of points. */
@@ -79,7 +93,9 @@ export const points = (score: number) => compact(score * POINT_SCALE);
 // paged or aggregated is a request the client makes, so these types live apart from
 // the socket contract above.
 
-export type TrendingItem = { id: string; name: string; target: string; recent: number };
+export type TrendingItem = {
+  id: string; name: string; target: string; has_icon: number; recent: number;
+};
 
 /** GET /api/board. `total` is the number of listings matching the filter, not the
  *  number returned, so the client knows whether another page exists. */
@@ -120,6 +136,7 @@ export type ListingDetail = {
   clicks: number;
   shares: number;
   score: number;
+  has_icon: number;
   /** Position on the all-time board, or null while the listing is still short of the
    *  proof-of-work gate and therefore not on it. */
   rank: number | null;

@@ -109,6 +109,11 @@ export const config = {
      *  capped to keep one client from claiming the whole board. */
     maxReportedHashrate: int("MAX_REPORTED_HASHRATE", 5_000_000, { min: 1 }),
     newListingsPerMinute: int("RATE_MAX", 5, { min: 1, max: 10_000 }),
+    /** Largest uploaded icon. The browser re-draws every pick onto a 128px canvas
+     *  before sending, and the worst case that survives that is a noisy photo at
+     *  roughly 55 kB, so this is headroom over our own encoder rather than a budget
+     *  for whatever someone chooses to send. */
+    maxIconBytes: int("MAX_ICON_BYTES", 64 * 1024, { min: 1024, max: 1 << 20 }),
     /** IPs tracked for rate limiting before the oldest are evicted. */
     rateBuckets: int("RATE_BUCKETS", 10_000, { min: 100, max: 1_000_000 }),
   },
@@ -118,6 +123,11 @@ export const config = {
      *  anti-spam mechanism: listing costs the currency the game runs on. */
     visibilityThreshold: int("VISIBILITY_THRESHOLD", 600, { min: 1 }),
     entries: int("BOARD_ENTRIES", 50, { min: 1, max: 500 }),
+    /** Points a listing needs before its owner may replace the letter avatar with an
+     *  uploaded icon. A logo is the loudest thing on a row, so it is earned in the
+     *  currency the board runs on rather than handed to every new listing - and it
+     *  keeps an upload form off a listing anyone can create in one POST. */
+    iconMinPoints: int("ICON_MIN_POINTS", 2_000, { min: 0 }),
     pendingEntries: int("BOARD_PENDING_ENTRIES", 20, { min: 1, max: 500 }),
     trendingEntries: int("BOARD_TRENDING_ENTRIES", 10, { min: 1, max: 500 }),
     feedEntries: int("BOARD_FEED_ENTRIES", 15, { min: 1, max: 200 }),

@@ -9,7 +9,8 @@ import { Miner } from "./mining";
 import { rememberListing } from "./storage";
 
 const EMPTY: BoardSnapshot = {
-  entries: [], pending: [], total: 0, limit: 1, threshold: 1, online: 0, mining: 0, feed: [],
+  entries: [], pending: [], total: 0, limit: 1, threshold: 1, iconMinPoints: Infinity,
+  online: 0, mining: 0, feed: [],
 };
 
 const RECONNECT_MS = 2_000;

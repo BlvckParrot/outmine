@@ -15,6 +15,17 @@ db.exec("PRAGMA busy_timeout = 5000");
 db.exec("PRAGMA synchronous = NORMAL");
 db.exec(await Bun.file(new URL("./schema.sql", import.meta.url)).text());
 
+// SQLite has no ADD COLUMN IF NOT EXISTS, and CREATE TABLE IF NOT EXISTS in schema.sql
+// is a no-op on a database that already exists - so a column added after the first
+// deploy has to arrive this way or only fresh installs would ever get it.
+for (const column of ["icon BLOB"]) {
+  try {
+    db.exec(`ALTER TABLE listings ADD COLUMN ${column}`);
+  } catch {
+    /* already there */
+  }
+}
+
 /** Liveness probe for /health. A query rather than a flag: the file can go away or
  *  the disk can fill under a process that is otherwise perfectly happy. */
 export function dbAlive(): boolean {
@@ -37,4 +48,7 @@ export type Listing = {
   clicks: number;
   shares: number;
   score: number;
+  /** 1 when an icon has been uploaded. The bytes themselves are never selected with
+   *  the row: a board page is fifty rows and would carry a megabyte of PNG. */
+  has_icon: number;
 };

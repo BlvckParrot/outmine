@@ -5,7 +5,7 @@ import { badgeSvg, cardSvg, homeCardSvg, render, standing } from "./cards";
 const listing = {
   id: "abc123abc123", kind: "domain" as const, target: "acme.example",
   name: "Acme", tagline: "first", created_at: 0, visible: 1,
-  clicks: 0, shares: 900, score: 0.004, rank: 1,
+  clicks: 0, shares: 900, score: 0.004, rank: 1, has_icon: 0,
 };
 
 test("standing reads as a rank once the listing is on the board", () => {

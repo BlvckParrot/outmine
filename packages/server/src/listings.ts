@@ -1,3 +1,4 @@
+import { ICON_MAX_PX, POINT_SCALE } from "@outmine/protocol";
 import { config } from "./config";
 import { db, type Listing } from "./db";
 import { cleanText, secretsMatch } from "./security";
@@ -13,7 +14,8 @@ const HANDLE_HOSTS = new Set(["x.com", "www.x.com", "twitter.com", "www.twitter.
 /** Columns safe to hand to a client. Never `SELECT *`: that table also holds
  *  edit_token_hash, and the Listing type does not mention it, so a leak through a
  *  route would typecheck cleanly and go unnoticed. */
-const PUBLIC_COLUMNS = "id, kind, target, name, tagline, created_at, visible, clicks, shares, score";
+const PUBLIC_COLUMNS =
+  "id, kind, target, name, tagline, created_at, visible, clicks, shares, score, icon IS NOT NULL AS has_icon";
 
 export class TargetError extends Error {}
 
@@ -110,16 +112,23 @@ export function createListing(input: {
   throw new Error("could not allocate a listing id");
 }
 
-export function updateListing(
-  id: string,
-  editToken: string,
-  patch: { name?: string; tagline?: string },
-): Listing {
+/** The listing, if this token is the one it was created with. Every owner-only write
+ *  goes through here so there is one place the comparison is constant-time. */
+function owned(id: string, editToken: string): Listing {
   const row = db.query(`SELECT edit_token_hash FROM listings WHERE id = ?`).get(id) as
     | { edit_token_hash: string }
     | null;
   if (!row) throw new TargetError("no such listing");
   if (!secretsMatch(row.edit_token_hash, hashToken(editToken))) throw new TargetError("bad edit token");
+  return getListing(id)!;
+}
+
+export function updateListing(
+  id: string,
+  editToken: string,
+  patch: { name?: string; tagline?: string },
+): Listing {
+  owned(id, editToken);
 
   if (patch.name !== undefined) {
     db.query(`UPDATE listings SET name = ? WHERE id = ?`).run(checkedName(patch.name), id);
@@ -129,6 +138,50 @@ export function updateListing(
   }
   return getListing(id)!;
 }
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const IHDR = 0x49484452;
+
+/** PNG only, judged by its bytes rather than by the Content-Type the uploader chose.
+ *
+ *  The browser re-draws whatever was picked onto a canvas and sends the result, so for
+ *  an ordinary visitor this only ever checks our own encoder. It is written as a wall
+ *  because the endpoint is reachable with curl: SVG in particular is refused, since it
+ *  is a document with scripts in it and this one would be served from our own origin. */
+export function checkedIcon(bytes: Uint8Array): Uint8Array {
+  if (bytes.length > config.limits.maxIconBytes) throw new TargetError("icon too large");
+  if (bytes.length < 24 || PNG_SIGNATURE.some((byte, i) => bytes[i] !== byte)) {
+    throw new TargetError("icon must be a png");
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // A PNG's first chunk is always IHDR: 4 bytes of length, 4 of type, then the size.
+  if (view.getUint32(12) !== IHDR) throw new TargetError("icon must be a png");
+
+  const width = view.getUint32(16);
+  const height = view.getUint32(20);
+  if (width < 1 || height < 1 || width > ICON_MAX_PX || height > ICON_MAX_PX) {
+    throw new TargetError(`icon must be at most ${ICON_MAX_PX}x${ICON_MAX_PX}`);
+  }
+  return bytes;
+}
+
+/** Replaces a listing's icon. Gated on points as well as on the token: the token only
+ *  says whose listing it is, and an icon is the loudest thing on a row. */
+export function setIcon(id: string, editToken: string, bytes: Uint8Array): Listing {
+  const listing = owned(id, editToken);
+  if (listing.score * POINT_SCALE < config.board.iconMinPoints) {
+    throw new TargetError(`an icon unlocks at ${config.board.iconMinPoints} points`);
+  }
+
+  db.query(`UPDATE listings SET icon = ? WHERE id = ?`).run(checkedIcon(bytes), id);
+  return getListing(id)!;
+}
+
+/** The bytes, selected on their own so no other query ever carries them. */
+export const getIcon = (id: string): Uint8Array | null =>
+  (db.query(`SELECT icon FROM listings WHERE id = ?`).get(id) as { icon: Uint8Array | null } | null)
+    ?.icon ?? null;
 
 export const getListing = (id: string) =>
   db.query(`SELECT ${PUBLIC_COLUMNS} FROM listings WHERE id = ?`).get(id) as Listing | null;
@@ -231,6 +284,7 @@ export function listBoard(query: BoardQuery = {}): Listing[] {
     const since = Math.floor(Date.now() / 3_600_000) - 23;
     return db.query(
       `SELECT l.id, l.kind, l.target, l.name, l.tagline, l.created_at, l.visible, l.clicks,
+              l.icon IS NOT NULL AS has_icon,
               COALESCE(SUM(b.shares), 0) AS shares,
               COALESCE(SUM(b.diff_sum), 0) AS score
        FROM listings l
@@ -276,12 +330,12 @@ export function listingRank(listing: Pick<Listing, "score" | "created_at">): num
 /** What has been mined for recently, which is a different question from who is on top. */
 export const trending = (hours = 2, limit = config.board.trendingEntries) =>
   db.query(
-    `SELECT l.id, l.name, l.target, SUM(b.diff_sum) AS recent
+    `SELECT l.id, l.name, l.target, l.icon IS NOT NULL AS has_icon, SUM(b.diff_sum) AS recent
      FROM share_buckets b JOIN listings l ON l.id = b.listing_id
      WHERE b.hour >= ? AND l.visible = 1
      GROUP BY l.id ORDER BY recent DESC LIMIT ?`,
   ).all(Math.floor(Date.now() / 3_600_000) - (hours - 1), limit) as {
-    id: string; name: string; target: string; recent: number;
+    id: string; name: string; target: string; has_icon: number; recent: number;
   }[];
 
 /** Everything the site has ever accumulated, for the public stats page. */

@@ -326,6 +326,7 @@ function boardSnapshot(): BoardSnapshot {
     total: countBoard(),
     limit: config.board.entries,
     threshold: config.board.visibilityThreshold,
+    iconMinPoints: config.board.iconMinPoints,
     online: clients.size,
     mining: miningCount(),
     feed: feed.slice(-config.board.feedEntries),
