@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config";
+import { log } from "./log";
 
 mkdirSync(dirname(config.dbPath), { recursive: true });
 
@@ -16,15 +17,47 @@ db.exec("PRAGMA synchronous = NORMAL");
 db.exec(await Bun.file(new URL("./schema.sql", import.meta.url)).text());
 
 // SQLite has no ADD COLUMN IF NOT EXISTS, and CREATE TABLE IF NOT EXISTS in schema.sql
-// is a no-op on a database that already exists - so a column added after the first
+// is a no-op on a database that already exists - so anything added after the first
 // deploy has to arrive this way or only fresh installs would ever get it.
-for (const column of ["icon BLOB"]) {
-  try {
-    db.exec(`ALTER TABLE listings ADD COLUMN ${column}`);
-  } catch {
-    /* already there */
+//
+// Append only, never edit or reorder: the index of a step is its version, and a
+// database that has already run step 2 will never look at it again.
+const MIGRATIONS = [
+  `ALTER TABLE listings ADD COLUMN icon BLOB`, // 0 -> 1
+];
+
+migrate();
+
+function migrate() {
+  let version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+
+  // Databases from before this loop existed: the icon column was added by a
+  // try/catch ALTER that left no record of itself, so version 0 does not mean the
+  // step below is still owed. Running it anyway would fail on a duplicate column and
+  // take the process down at import time.
+  if (version === 0 && hasColumn("listings", "icon")) {
+    db.exec("PRAGMA user_version = 1");
+    version = 1;
+  }
+
+  for (; version < MIGRATIONS.length; version++) {
+    const step = MIGRATIONS[version]!;
+    // One transaction per step, so a failure leaves the version pointing at the step
+    // that has to be retried rather than at one that never ran.
+    db.transaction(() => {
+      db.exec(step);
+      db.exec(`PRAGMA user_version = ${version + 1}`); // PRAGMA takes no bound parameter
+    })();
+    log("migrated", { version: version + 1, step });
   }
 }
+
+// A declaration, not a const: migrate() runs at import time, above this line.
+function hasColumn(table: string, column: string): boolean {
+  return db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all()
+    .some((c) => c.name === column);
+}
+
 
 /** Liveness probe for /health. A query rather than a flag: the file can go away or
  *  the disk can fill under a process that is otherwise perfectly happy. */

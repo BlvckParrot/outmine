@@ -40,6 +40,11 @@ broadcast, tie-breaker included, so SQLite walks them in order instead of sortin
 a temporary B-tree. Checked with `EXPLAIN QUERY PLAN`, which is also the way to notice
 when a query stops using them.
 
+Schema changes travel in `db.ts` as an append-only list, with `PRAGMA user_version`
+recording how far a database has got. SQLite has no `ADD COLUMN IF NOT EXISTS`, and the
+`CREATE TABLE IF NOT EXISTS` in `schema.sql` is a no-op on a database that already
+exists, so without this only fresh installs would ever see a new column.
+
 ## Two boards, one table
 
 All-time score never decays, which is the right rule for a leaderboard and a bad one
@@ -148,6 +153,12 @@ that connection.
 Counting rejects alone is not enough — a pool that has had enough simply stops
 replying, so silence counts against the client too.
 
+New listings are rate limited per address (`RATE_MAX`, five a minute) by
+`hono-rate-limiter`, keyed through `clientAddress` rather than the library's own
+default: that default reads `X-Forwarded-For` from the left, which is the end a client
+writes, so anyone could reset their own limit with one forged header. See
+`TRUSTED_PROXIES` below.
+
 ## What it earns
 
 **Algorithm choice moves revenue by orders of magnitude; nothing else comes close.**
@@ -223,6 +234,16 @@ Reading the first entry - the obvious way - lets anyone forge an address and wal
 the rate limit with a single header, so at `0` the header is ignored entirely and the
 socket address is used. The bundled compose file sets it to `1` for Caddy.
 
+Every response carries a Content-Security-Policy. Two directives in it are not
+boilerplate. `script-src` includes `'wasm-unsafe-eval'`, because the miner is a
+WebAssembly module reached through `WebAssembly.instantiateStreaming`, and Chrome
+refuses that without it — which would break the entire product silently. And the
+inline theme script, which has to run before the first paint or a stored dark theme
+flashes white, is vouched for by a per-request nonce: `index.html` carries a
+placeholder that is filled in beside the crawler tags, so it cannot go stale the way a
+hard-coded hash would. `scripts/browser-check.ts` is what proves the policy did not
+break mining.
+
 ## Configuration
 
 Every tunable lives in `packages/server/src/config.ts` and is validated at startup:
@@ -278,14 +299,15 @@ packages/server/
   stratum.ts         one pool connection: framing, submits, reconnect
   blockheader.ts     stratum job -> the 80 bytes the miner hashes
   listings.ts        target normalisation and every SQL statement in the project
-  db.ts              the connection, the pragmas, the liveness probe
-scripts/             backup, browser check, yield measurement
+  db.ts              the connection, the pragmas, the migrations, the liveness probe
+scripts/             backup, browser check, yield measurement, test setup
 ```
 
-Bun workspaces. Still one deployed process and one SQLite file; two runtime
-dependencies on the server (`hono` and `@resvg/resvg-js`, the latter only to turn a
-share card into a PNG) and one in the browser (`lucide-react`, tree-shaken to the eight
-icons used). The split is about keeping the boundaries honest — the browser cannot
+Bun workspaces. Still one deployed process and one SQLite file; three runtime
+dependencies on the server (`hono`, `@resvg/resvg-js` only to turn a share card into a
+PNG, and `hono-rate-limiter`) and one in the browser (`lucide-react`, tree-shaken to
+the eight icons used). Bodies, ETags, static files, the CSP and the request validators
+are all hono's own middleware rather than further packages. The split is about keeping the boundaries honest — the browser cannot
 reach into server code, and the shared contract is a package rather than a relative
 path.
 
@@ -351,6 +373,12 @@ INTEGRATION=1 POOL_ALGO=rinhash bun test packages/server/src/hub.integration.tes
 
 BASE=http://localhost:5173 bun scripts/browser-check.ts  # consent, mine, shares land
 ```
+
+`routes.test.ts` drives the HTTP surface through `app.request()` — no socket, no
+`Bun.serve` — covering the token gates, the body limits, the rate limit and the shape
+of every error. It writes, so `scripts/test-setup.ts` is preloaded to point `DB_PATH`
+at a scratch file: Bun shares one module registry across test files, so a test cannot
+redirect the database for itself once another file has opened it.
 
 `browser-check.ts` covers what no unit test can reach: that navigating to another page
 does not stop mining, that a returning visitor is not asked to consent twice, and — the

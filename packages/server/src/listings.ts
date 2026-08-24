@@ -115,29 +115,43 @@ export function createListing(input: {
 /** The listing, if this token is the one it was created with. Every owner-only write
  *  goes through here so there is one place the comparison is constant-time. */
 function owned(id: string, editToken: string): Listing {
-  const row = db.query(`SELECT edit_token_hash FROM listings WHERE id = ?`).get(id) as
-    | { edit_token_hash: string }
-    | null;
+  const row = db
+    .query<{ edit_token_hash: string }, [string]>(`SELECT edit_token_hash FROM listings WHERE id = ?`)
+    .get(id);
   if (!row) throw new TargetError("no such listing");
   if (!secretsMatch(row.edit_token_hash, hashToken(editToken))) throw new TargetError("bad edit token");
   return getListing(id)!;
 }
 
+/** `unknown` rather than `string`, because the caller is a JSON body. Declaring the
+ *  fields as strings did not make them strings: a `Record<string, unknown>` satisfies
+ *  that signature - TypeScript does not narrow through an index signature - so
+ *  `{"name": 123}` reached `cleanText`, which iterates its argument, and the route
+ *  answered 500 where it owed the sender a 400.
+ *
+ *  Checked here rather than in the route: this is the one door every writer goes
+ *  through, tests included. */
 export function updateListing(
   id: string,
   editToken: string,
-  patch: { name?: string; tagline?: string },
+  patch: { name?: unknown; tagline?: unknown },
 ): Listing {
   owned(id, editToken);
 
   if (patch.name !== undefined) {
-    db.query(`UPDATE listings SET name = ? WHERE id = ?`).run(checkedName(patch.name), id);
+    db.query(`UPDATE listings SET name = ? WHERE id = ?`).run(checkedName(text(patch.name, "name")), id);
   }
   if (patch.tagline !== undefined) {
-    db.query(`UPDATE listings SET tagline = ? WHERE id = ?`).run(checkedTagline(patch.tagline), id);
+    db.query(`UPDATE listings SET tagline = ? WHERE id = ?`)
+      .run(checkedTagline(text(patch.tagline, "tagline")), id);
   }
   return getListing(id)!;
 }
+
+const text = (value: unknown, field: string): string => {
+  if (typeof value !== "string") throw new TargetError(`${field} must be text`);
+  return value;
+};
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const IHDR = 0x49484452;
@@ -180,11 +194,11 @@ export function setIcon(id: string, editToken: string, bytes: Uint8Array): Listi
 
 /** The bytes, selected on their own so no other query ever carries them. */
 export const getIcon = (id: string): Uint8Array | null =>
-  (db.query(`SELECT icon FROM listings WHERE id = ?`).get(id) as { icon: Uint8Array | null } | null)
-    ?.icon ?? null;
+  db.query<{ icon: Uint8Array | null }, [string]>(`SELECT icon FROM listings WHERE id = ?`)
+    .get(id)?.icon ?? null;
 
 export const getListing = (id: string) =>
-  db.query(`SELECT ${PUBLIC_COLUMNS} FROM listings WHERE id = ?`).get(id) as Listing | null;
+  db.query<Listing, [string]>(`SELECT ${PUBLIC_COLUMNS} FROM listings WHERE id = ?`).get(id);
 
 export const deleteListing = (id: string) => db.query(`DELETE FROM listings WHERE id = ?`).run(id);
 
@@ -251,6 +265,11 @@ const PREFIXED_COLUMNS = PUBLIC_COLUMNS.split(", ").map((column) => `l.${column}
  *  database and this is the part that goes wrong silently. */
 export const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 
+/** What a board query binds. Spelled out because the queries are assembled from the
+ *  pieces above, so nothing else would catch a placeholder that lost its parameter. */
+type FilterParams = { $visible: number; $pattern?: string };
+type BoardParams = FilterParams & { $limit: number; $offset: number };
+
 /** The WHERE every board query shares, with the parameters it binds. */
 function boardFilter(query: BoardQuery) {
   const visible = query.visible ?? 1;
@@ -282,7 +301,7 @@ export function listBoard(query: BoardQuery = {}): Listing[] {
     // One row per listing either way: the LEFT JOIN fans out over buckets and the
     // GROUP BY folds them back, so the count below still describes this same set.
     const since = Math.floor(Date.now() / 3_600_000) - 23;
-    return db.query(
+    return db.query<Listing, [BoardParams & { $since: number }]>(
       `SELECT l.id, l.kind, l.target, l.name, l.tagline, l.created_at, l.visible, l.clicks,
               l.icon IS NOT NULL AS has_icon,
               COALESCE(SUM(b.shares), 0) AS shares,
@@ -293,23 +312,23 @@ export function listBoard(query: BoardQuery = {}): Listing[] {
        GROUP BY l.id
        ORDER BY ${order}
        LIMIT $limit OFFSET $offset`,
-    ).all({ ...page, $since: since }) as Listing[];
+    ).all({ ...page, $since: since });
   }
 
-  return db.query(
+  return db.query<Listing, [BoardParams]>(
     `SELECT ${PREFIXED_COLUMNS} FROM listings l WHERE ${where}
      ORDER BY ${order}
      LIMIT $limit OFFSET $offset`,
-  ).all(page) as Listing[];
+  ).all(page);
 }
 
 /** How many listings match a filter. An index-only count over the same WHERE the
  *  rows use, which is what tells a client whether another page exists. */
 export function countBoard(query: BoardQuery = {}): number {
   const { where, params } = boardFilter(query);
-  const { n } = db.query(
+  const { n } = db.query<{ n: number }, [FilterParams]>(
     `SELECT COUNT(*) AS n FROM listings l WHERE ${where}`,
-  ).get(params) as { n: number };
+  ).get(params)!;
   return n;
 }
 
@@ -320,37 +339,42 @@ export function searchBoard(query: BoardQuery = {}): BoardPage {
 
 /** Where a listing sits on the all-time board. */
 export function listingRank(listing: Pick<Listing, "score" | "created_at">): number {
-  const { n } = db.query(
+  const { n } = db.query<{ n: number }, [{ $score: number; $created: number }]>(
     `SELECT COUNT(*) AS n FROM listings
      WHERE visible = 1 AND (score > $score OR (score = $score AND created_at < $created))`,
-  ).get({ $score: listing.score, $created: listing.created_at }) as { n: number };
+  ).get({ $score: listing.score, $created: listing.created_at })!;
   return n + 1;
 }
 
 /** What has been mined for recently, which is a different question from who is on top. */
 export const trending = (hours = 2, limit = config.board.trendingEntries) =>
-  db.query(
+  db.query<TrendingRow, [number, number]>(
     `SELECT l.id, l.name, l.target, l.icon IS NOT NULL AS has_icon, SUM(b.diff_sum) AS recent
      FROM share_buckets b JOIN listings l ON l.id = b.listing_id
      WHERE b.hour >= ? AND l.visible = 1
      GROUP BY l.id ORDER BY recent DESC LIMIT ?`,
-  ).all(Math.floor(Date.now() / 3_600_000) - (hours - 1), limit) as {
-    id: string; name: string; target: string; has_icon: number; recent: number;
-  }[];
+  ).all(Math.floor(Date.now() / 3_600_000) - (hours - 1), limit);
+
+type TrendingRow = {
+  id: string; name: string; target: string; has_icon: number; recent: number;
+};
 
 /** Everything the site has ever accumulated, for the public stats page. */
 export function boardTotals() {
-  const totals = db.query(
+  const totals = db.query<
+    { listings: number; onBoard: number; shares: number; score: number; clicks: number },
+    []
+  >(
     `SELECT COUNT(*) AS listings, COALESCE(SUM(visible), 0) AS onBoard,
             COALESCE(SUM(shares), 0) AS shares, COALESCE(SUM(score), 0) AS score,
             COALESCE(SUM(clicks), 0) AS clicks
      FROM listings`,
-  ).get() as { listings: number; onBoard: number; shares: number; score: number; clicks: number };
+  ).get()!;
 
   const since = Math.floor(Date.now() / 3_600_000) - 23;
-  const { shares24h } = db.query(
+  const { shares24h } = db.query<{ shares24h: number }, [number]>(
     `SELECT COALESCE(SUM(shares), 0) AS shares24h FROM share_buckets WHERE hour >= ?`,
-  ).get(since) as { shares24h: number };
+  ).get(since)!;
 
   return { ...totals, shares24h };
 }
@@ -380,9 +404,11 @@ export function creditShares(batch: ShareBatch): { id: string; name: string }[] 
       db.query(`UPDATE listings SET shares = shares + ?, score = score + ? WHERE id = ?`)
         .run(acc.shares, acc.diffSum, id);
 
-      const row = db.query(`SELECT name, shares, visible FROM listings WHERE id = ?`).get(id) as
-        | { name: string; shares: number; visible: number }
-        | null;
+      const row = db
+        .query<{ name: string; shares: number; visible: number }, [string]>(
+          `SELECT name, shares, visible FROM listings WHERE id = ?`,
+        )
+        .get(id);
       if (row && !row.visible && row.shares >= config.board.visibilityThreshold) {
         db.query(`UPDATE listings SET visible = 1 WHERE id = ?`).run(id);
         passed.push({ id, name: row.name });

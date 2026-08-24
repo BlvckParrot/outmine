@@ -26,9 +26,11 @@
          finishing. The other three faces load on demand through unicode-range. -->
     <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
 
-    <!-- Before the first paint, or a stored dark theme flashes white on load. Small
-         enough to inline; Caddy sends no CSP, so nothing blocks it. -->
-    <script>
+    <!-- Before the first paint, or a stored dark theme flashes white on load. Inline,
+         so the server's CSP has to vouch for it: the nonce placeholder is filled in per
+         request alongside the og tags above. Vite leaves the attribute alone and serves
+         this file unrewritten in development, where there is no CSP to satisfy. -->
+    <script nonce="__CSP_NONCE__">
       try {
         if (localStorage.getItem("outmine:theme") === "dark") {
           document.documentElement.classList.add("dark");

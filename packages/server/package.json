@@ -10,7 +10,8 @@
   "dependencies": {
     "@outmine/protocol": "workspace:*",
     "@resvg/resvg-js": "^2.6.2",
-    "hono": "^4.13.3"
+    "hono": "^4.13.3",
+    "hono-rate-limiter": "^0.5.3"
   },
   "devDependencies": {
     "@outmine/wasm": "workspace:*"

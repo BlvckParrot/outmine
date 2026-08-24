@@ -1,0 +1,213 @@
+// The HTTP surface, exercised through ((await app.request() - no socket, no Bun.serve.
+//
+// The database is a scratch file: scripts/test-setup.ts points DB_PATH at one before
+// anything here imports db.ts.
+import { expect, test } from "bun:test";
+import { config } from "./config";
+import { app } from "./routes";
+
+/** Every request carries its own address. The rate limit is keyed on it, so without
+ *  this the twentieth test in the file would start getting 429 from the first ones. */
+/** app.request() answers `Response | Promise<Response>`, which is awaitable but not
+ *  chainable, so the body of a read is unwrapped here once. */
+const json = async (...args: Parameters<typeof app.request>) => (await app.request(...args)).json();
+
+let addresses = 0;
+const from = () => ({ socketAddress: `10.0.0.${++addresses}` });
+
+let targets = 0;
+const uniqueTarget = () => `t${++targets}-${process.pid}.example.com`;
+
+const post = (body: unknown, env = from()) =>
+  app.request(
+    "/api/listings",
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+    env,
+  );
+
+/** A listing plus the token it was created with, for the owner-only routes. */
+async function create(overrides: Record<string, unknown> = {}) {
+  const res = await post({ kind: "domain", target: uniqueTarget(), name: "Test", ...overrides });
+  expect(res.status).toBe(201);
+  return (await res.json()) as { listing: { id: string }; editToken: string };
+}
+
+// --- reads -------------------------------------------------------------------------
+
+test("/health reports a live database", async () => {
+  const res = await app.request("/health");
+  expect(res.status).toBe(200);
+  expect(await res.json()).toMatchObject({ ok: true });
+});
+
+test("/api/board answers the shape the client expects", async () => {
+  const body = await json("/api/board");
+  expect(Array.isArray(body.entries)).toBe(true);
+  expect(Array.isArray(body.pending)).toBe(true);
+  expect(body.limit).toBe(config.board.entries);
+  expect(body.threshold).toBe(config.board.visibilityThreshold);
+});
+
+test("/api/board finds a pending listing by name", async () => {
+  const { listing } = await create({ name: "Findable Widget" });
+  const body = await json("/api/board?q=Findable+Widget");
+  expect(body.pending.map((e: { id: string }) => e.id)).toContain(listing.id);
+});
+
+test("/api/board escapes LIKE wildcards rather than matching everything", async () => {
+  await create({ name: "Wildcard Probe" });
+  const body = await json("/api/board?q=%25");
+  expect(body.pendingTotal).toBe(0);
+});
+
+test("/api/stats totals are numbers, not nulls", async () => {
+  const body = await json("/api/stats");
+  for (const key of ["listings", "onBoard", "shares", "score", "clicks", "shares24h"]) {
+    expect(typeof body[key]).toBe("number");
+  }
+});
+
+test("/api/trending answers a list", async () => {
+  expect(Array.isArray(await json("/api/trending"))).toBe(true);
+});
+
+// --- creating ----------------------------------------------------------------------
+
+test("a new listing comes back with its edit token exactly once", async () => {
+  const { listing, editToken } = await create();
+  expect(editToken).toBeTruthy();
+  // The hash is stored, never the token, and no route may hand back the column.
+  expect(JSON.stringify(listing)).not.toContain("edit_token_hash");
+
+  const fetched = await json(`/api/listings/${listing.id}`);
+  expect(fetched).not.toHaveProperty("edit_token_hash");
+});
+
+test("the same target cannot be listed twice", async () => {
+  const target = uniqueTarget();
+  expect((await post({ kind: "domain", target, name: "First" })).status).toBe(201);
+
+  const second = await post({ kind: "domain", target, name: "Second" });
+  expect(second.status).toBe(400);
+  expect((await second.json()).error).toBe("already listed");
+});
+
+test.each([
+  ["a link shortener", { kind: "domain", target: "https://bit.ly/abc", name: "S" }],
+  ["a bare host", { kind: "domain", target: "localhost", name: "S" }],
+  ["an empty target", { kind: "domain", target: "", name: "S" }],
+  ["a nameless listing", { kind: "domain", target: "nameless.example.com", name: "" }],
+])("%s is refused with a reason", async (_label, body) => {
+  const res = await post(body);
+  expect(res.status).toBe(400);
+  expect(typeof (await res.json()).error).toBe("string");
+});
+
+test("a body that is not JSON is refused as JSON", async () => {
+  const res = await app.request(
+    "/api/listings",
+    { method: "POST", headers: { "content-type": "application/json" }, body: "not json at all" },
+    from(),
+  );
+  expect(res.status).toBe(400);
+  // The frontend reads data.error after res.json(); a plain-text error would throw there.
+  expect(typeof (await res.json()).error).toBe("string");
+});
+
+test("listings are rate limited per address", async () => {
+  const env = { socketAddress: "10.9.9.9" };
+  const statuses: number[] = [];
+  for (let i = 0; i <= config.limits.newListingsPerMinute; i++) {
+    statuses.push((await post({ kind: "domain", target: uniqueTarget(), name: "Flood" }, env)).status);
+  }
+  expect(statuses.at(-1)).toBe(429);
+  // A different address is unaffected by that flood.
+  expect((await post({ kind: "domain", target: uniqueTarget(), name: "Innocent" })).status).toBe(201);
+});
+
+// --- editing -----------------------------------------------------------------------
+
+const patch = (id: string, body: unknown, token?: string) =>
+  app.request(`/api/listings/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", ...(token ? { "x-edit-token": token } : {}) },
+    body: JSON.stringify(body),
+  });
+
+test("an edit needs the token it was created with", async () => {
+  const { listing, editToken } = await create();
+
+  expect((await patch(listing.id, { name: "New" })).status).toBe(401);
+  expect((await patch(listing.id, { name: "New" }, "not-the-token")).status).toBe(400);
+
+  const ok = await patch(listing.id, { name: "New Name" }, editToken);
+  expect(ok.status).toBe(200);
+  expect((await ok.json()).name).toBe("New Name");
+});
+
+test("a name that is not text is refused, not a 500", async () => {
+  const { listing, editToken } = await create();
+  const res = await patch(listing.id, { name: 123 }, editToken);
+  expect(res.status).toBe(400);
+  expect(typeof (await res.json()).error).toBe("string");
+});
+
+// --- icons -------------------------------------------------------------------------
+
+test("an icon needs the token", async () => {
+  const { listing } = await create();
+  const res = await app.request(`/api/listings/${listing.id}/icon`, {
+    method: "PUT",
+    body: new Uint8Array(8),
+  });
+  expect(res.status).toBe(401);
+});
+
+test("an oversized icon is refused before it is read", async () => {
+  const { listing, editToken } = await create();
+  const res = await app.request(`/api/listings/${listing.id}/icon`, {
+    method: "PUT",
+    headers: { "x-edit-token": editToken },
+    body: new Uint8Array(config.limits.maxIconBytes + 1024),
+  });
+  expect(res.status).toBe(413);
+});
+
+test("an icon is gated on points, not only on the token", async () => {
+  const { listing, editToken } = await create();
+  const res = await app.request(`/api/listings/${listing.id}/icon`, {
+    method: "PUT",
+    headers: { "x-edit-token": editToken },
+    body: new Uint8Array(64),
+  });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toContain("icon unlocks");
+});
+
+test("an icon that was never uploaded is a 404", async () => {
+  const { listing } = await create();
+  expect((await app.request(`/icon/${listing.id}.png`)).status).toBe(404);
+});
+
+// --- the rest ----------------------------------------------------------------------
+
+test("a listing that does not exist is a 404, not a 500", async () => {
+  expect((await app.request("/api/listings/nope")).status).toBe(404);
+});
+
+test("takedown is closed without an admin token", async () => {
+  const { listing } = await create();
+  expect((await app.request(`/api/listings/${listing.id}`, { method: "DELETE" })).status).toBe(401);
+  // Still there.
+  expect((await app.request(`/api/listings/${listing.id}`)).status).toBe(200);
+});
+
+test("the outbound hop counts a click and refuses to be indexed", async () => {
+  const { listing } = await create();
+  const res = await app.request(`/r/${listing.id}`);
+  expect(res.status).toBe(302);
+  expect(res.headers.get("x-robots-tag")).toContain("noindex");
+
+  const after = await json(`/api/listings/${listing.id}`);
+  expect(after.clicks).toBe(1);
+});

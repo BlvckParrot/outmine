@@ -131,8 +131,6 @@ export const config = {
      *  roughly 55 kB, so this is headroom over our own encoder rather than a budget
      *  for whatever someone chooses to send. */
     maxIconBytes: int("MAX_ICON_BYTES", 64 * 1024, { min: 1024, max: 1 << 20 }),
-    /** IPs tracked for rate limiting before the oldest are evicted. */
-    rateBuckets: int("RATE_BUCKETS", 10_000, { min: 100, max: 1_000_000 }),
   },
 
   board: {

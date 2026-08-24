@@ -1,9 +1,18 @@
 // The HTTP surface. Socket plumbing is in server.ts, share cards and crawler tags in
 // share.ts, every SQL statement in listings.ts - what is left here reads as a list of
 // what the API does.
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
-import type { BoardPageResponse, ListingDetail, StatsResponse, TrendingItem } from "@outmine/protocol";
+import { etag } from "hono/etag";
+import { NONCE, secureHeaders } from "hono/secure-headers";
+import { rateLimiter } from "hono-rate-limiter";
+import { HTTPException } from "hono/http-exception";
+import { validator } from "hono/validator";
+import type {
+  BoardPageResponse, ListingDetail, ListingKind, StatsResponse, TrendingItem,
+} from "@outmine/protocol";
 import { config } from "./config";
 import { dbAlive, type Listing } from "./db";
 import { clientCount, connectionCount, miningCount, poolHealthy, pushFeed } from "./hub";
@@ -13,12 +22,40 @@ import {
 } from "./listings";
 import { log } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
-import { OG_MARKER, origin, share, siteMeta } from "./share";
+import { OG_MARKER, origin, share, siteMeta, withNonce } from "./share";
 
 /** Handed in by server.ts, which is the only layer that can see the socket. */
 export type RequestContext = { socketAddress?: string };
 
 export const app = new Hono<{ Bindings: RequestContext }>();
+
+/** Content-Security-Policy.
+ *
+ *  Worth the care on this site in particular: it serves PNGs that its own visitors
+ *  uploaded, from its own origin, and it stitches text into index.html on the way out.
+ *
+ *  'wasm-unsafe-eval' is not optional. The miner is a WebAssembly module and the
+ *  emscripten glue reaches it through WebAssembly.instantiateStreaming, which Chrome
+ *  refuses under a script-src that does not say this - and the failure is the whole
+ *  product, silently. (The glue contains no eval and no new Function, so plain
+ *  'unsafe-eval' is not needed and is not granted.)
+ *
+ *  'unsafe-inline' in style-src covers the style attributes React writes for the
+ *  progress bars; CSP has no way to allow those by hash. */
+app.use(secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: [NONCE, "'self'", "'wasm-unsafe-eval'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    imgSrc: ["'self'", "data:"],
+    fontSrc: ["'self'"],
+    connectSrc: ["'self'"],
+    workerSrc: ["'self'", "blob:"],
+    objectSrc: ["'none'"],
+    baseUri: ["'self'"],
+    frameAncestors: ["'none'"],
+  },
+}));
 
 app.use("/api/*", cors({
   origin: (origin, c) => (originAllowed(origin, c.req.url) ? origin : null),
@@ -27,10 +64,57 @@ app.use("/api/*", cors({
 }));
 
 app.onError((err, c) => {
-  // Errors are logged with detail and answered without: an internal message can name
-  // a table, a path or a query.
+  // A middleware that rejects a request - a body over the limit, a body that is not
+  // JSON - reports it by throwing, and its status is the answer the sender is owed.
+  // Everything else is ours: logged with detail and answered without, because an
+  // internal message can name a table, a path or a query.
+  //
+  // Answered as JSON either way. Hono's own default is text/plain, and every caller in
+  // the frontend reads `data.error` after `res.json()`, so a plain-text 400 would
+  // surface there as a parse failure instead of as the reason.
+  if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+
   log("request_failed", { path: new URL(c.req.url).pathname, error: String(err) });
   return c.json({ error: "internal error" }, 500);
+});
+
+/** Bodies are bounded before they are read. Unbounded, one request could buffer as
+ *  much memory as the sender cares to send. */
+const boundedBody = (maxSize: number) =>
+  bodyLimit({ maxSize, onError: (c) => c.json({ error: "too large" }, 413) });
+
+/** The JSON a new listing is made of. Only the shape is checked here - what counts as
+ *  a valid target, and what a name is trimmed to, stays in listings.ts, which is the
+ *  gate every writer goes through. */
+const newListingBody = validator("json", (value, c) => {
+  const { kind: raw, target, name, tagline } = value as Record<string, unknown>;
+  // Matched positively rather than rejected with !==: TypeScript narrows `unknown` on
+  // an equality, but cannot subtract from it, so the negative form leaves `string`
+  // behind and the literal union has to be asserted back in.
+  const kind = raw === "handle" ? "handle" : raw === "domain" ? "domain" : null;
+  if (kind === null) return c.json({ error: "kind must be domain or handle" }, 400);
+  if (typeof target !== "string" || typeof name !== "string") {
+    return c.json({ error: "target and name are required" }, 400);
+  }
+
+  // Annotated, not inferred. Hono reads the validator's return type to type
+  // c.req.valid(), and an inferred object literal widens "domain" back to string.
+  const checked: { kind: ListingKind; target: string; name: string; tagline: string } = {
+    kind, target, name, tagline: typeof tagline === "string" ? tagline : "",
+  };
+  return checked;
+});
+
+/** A patch names only the fields it changes, so absent and present-but-wrong are
+ *  different answers. */
+const editListingBody = validator("json", (value, c) => {
+  const body = value as Record<string, unknown>;
+  for (const field of ["name", "tagline"] as const) {
+    if (body[field] !== undefined && typeof body[field] !== "string") {
+      return c.json({ error: `${field} must be text` }, 400);
+    }
+  }
+  return body as { name?: string; tagline?: string };
 });
 
 app.get("/health", (c) => {
@@ -97,22 +181,25 @@ app.get("/api/stats", (c) => {
 
 // --- listings ----------------------------------------------------------------------
 
-app.post("/api/listings", async (c) => {
-  const address = clientAddress(c.req.raw.headers, c.env?.socketAddress);
-  if (rateLimited(address)) return c.json({ error: "slow down" }, 429);
+/** Per-address sliding window. Without it a bot floods the pending list, which is
+ *  public and ordered, so a flood pushes the real entries off the end.
+ *
+ *  Registered ahead of the body middleware: there is no reason to buffer a body that
+ *  is about to be refused. */
+const newListingLimit = rateLimiter<{ Bindings: RequestContext }>({
+  windowMs: 60_000,
+  limit: config.limits.newListingsPerMinute,
+  // Ours, not the library's. Its default reads X-Forwarded-For from the left, which is
+  // the end a client writes, so anyone could reset their own limit with one forged
+  // header. clientAddress counts from the right, by TRUSTED_PROXIES. Security control,
+  // not configuration - see security.ts.
+  keyGenerator: (c) => clientAddress(c.req.raw.headers, c.env?.socketAddress),
+  handler: (c) => c.json({ error: "slow down" }, 429),
+});
 
-  const body = await readJsonBody(c.req.raw);
-  if (!body) return c.json({ error: "invalid json" }, 400);
-
+app.post("/api/listings", newListingLimit, boundedBody(config.limits.maxBodyBytes), newListingBody, (c) => {
   try {
-    const { listing, editToken } = createListing({
-      // createListing rejects anything that is not "domain" or "handle"; the cast only
-      // gets the unknown past the type checker so that check stays the single gate.
-      kind: body.kind as "domain" | "handle",
-      target: String(body.target ?? ""),
-      name: String(body.name ?? ""),
-      tagline: String(body.tagline ?? ""),
-    });
+    const { listing, editToken } = createListing(c.req.valid("json"));
     pushFeed(`${listing.name} joined and needs hashes`);
     log("listing_created", { id: listing.id, target: listing.target });
     // The edit token is returned once here and only its hash is stored.
@@ -123,15 +210,12 @@ app.post("/api/listings", async (c) => {
   }
 });
 
-app.patch("/api/listings/:id", async (c) => {
+app.patch("/api/listings/:id", boundedBody(config.limits.maxBodyBytes), editListingBody, (c) => {
   const token = c.req.header("x-edit-token");
   if (!token) return c.json({ error: "missing edit token" }, 401);
 
-  const body = await readJsonBody(c.req.raw);
-  if (!body) return c.json({ error: "invalid json" }, 400);
-
   try {
-    return c.json(updateListing(c.req.param("id"), token, body));
+    return c.json(updateListing(c.req.param("id"), token, c.req.valid("json")));
   } catch (err) {
     if (err instanceof TargetError) return c.json({ error: err.message }, 400);
     throw err;
@@ -145,12 +229,9 @@ app.patch("/api/listings/:id", async (c) => {
  *  Both gates are here for different reasons. The token says whose listing it is; the
  *  points say the row has earned the loudest thing on it, which is also what keeps an
  *  upload form off a listing that anyone can create with one POST. */
-app.put("/api/listings/:id/icon", async (c) => {
+app.put("/api/listings/:id/icon", boundedBody(config.limits.maxIconBytes), async (c) => {
   const token = c.req.header("x-edit-token");
   if (!token) return c.json({ error: "missing edit token" }, 401);
-
-  const declared = Number(c.req.header("content-length") ?? "0");
-  if (declared > config.limits.maxIconBytes) return c.json({ error: "icon too large" }, 413);
 
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   try {
@@ -193,13 +274,16 @@ app.get("/api/listings/:id", (c) => {
 /** The uploaded icon. Served from our own origin rather than linked from wherever the
  *  owner keeps it: a remote URL on fifty rows tells fifty third parties who is reading
  *  the board, and it breaks the moment that host does. */
+app.use("/icon/*", etag());
+
 app.get("/icon/:id{.+\\.png}", (c) => {
   const icon = getIcon(c.req.param("id").replace(/\.png$/, ""));
   if (!icon) return c.notFound();
   c.header("Content-Type", "image/png");
-  // Short: the URL does not change when the owner replaces the image, so this is how
-  // long a stale icon can survive.
-  c.header("Cache-Control", "public, max-age=60");
+  // The URL does not change when the owner replaces the image, so a max-age would be
+  // exactly how long a stale icon survives. Revalidating instead costs a request and
+  // answers 304 with no body, and the replacement is visible immediately.
+  c.header("Cache-Control", "public, no-cache");
   return c.body(icon as unknown as ArrayBuffer);
 });
 
@@ -217,67 +301,30 @@ app.get("/r/:id", (c) => {
 
 // --- pages -------------------------------------------------------------------------
 
-// /l/:id, the badge and the cards. Mounted before the catch-all, which would otherwise
-// answer /l/:id first and hand a crawler the generic tags.
-app.route("/", share);
-
-// Everything else is the built frontend, with index.html as the fallback.
-app.get("*", async (c) => {
-  const path = new URL(c.req.url).pathname;
-  const file = Bun.file(`${config.webDist}${path === "/" ? "/index.html" : path}`);
-  if (path !== "/" && (await file.exists())) return new Response(file);
-
+/** index.html with the crawler tags stitched in. A crawler runs no JavaScript, so the
+ *  tags cannot come from the app; index.html is a static file and cannot know the host
+ *  it will be served from, so they cannot come from the build either. */
+async function indexHandler(c: Context) {
   const index = Bun.file(`${config.webDist}/index.html`);
   if (!(await index.exists())) return c.text("frontend not built - run: bun run build", 503);
-  return c.html((await index.text()).replace(OG_MARKER, siteMeta(origin(c))));
-});
-
-// --- plumbing ----------------------------------------------------------------------
-
-/** Reads a bounded JSON body. Unbounded, a single request could buffer as much memory
- *  as the sender cares to send. Returns null for anything unparseable or oversized. */
-async function readJsonBody(req: Request): Promise<Record<string, unknown> | null> {
-  const declared = Number(req.headers.get("content-length") ?? "0");
-  if (declared > config.limits.maxBodyBytes) return null;
-
-  const text = await req.text().catch(() => null);
-  if (text === null || text.length > config.limits.maxBodyBytes) return null;
-
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return c.html(withNonce(c, (await index.text()).replace(OG_MARKER, siteMeta(origin(c)))));
 }
 
-/** Per-address sliding window, in memory. Without it a bot floods the pending list,
- *  which is public and ordered so a flood pushes the real entries off the end. */
-const RATE_WINDOW_MS = 60_000;
-const rateBuckets = new Map<string, number[]>();
+// Before serveStatic, which would otherwise answer "/" with the file itself: its
+// default document is index.html, and the copy on disk carries the marker rather than
+// the tags, so the home page would go out without an og:image.
+app.get("/", indexHandler);
 
-function rateLimited(address: string): boolean {
-  const now = Date.now();
-  const hits = (rateBuckets.get(address) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
-  hits.push(now);
+app.use("/og/*", etag());
+app.use("/badge/*", etag());
 
-  // Deleted before being set again, which moves the address to the end of the Map.
-  // Plain `set` on an existing key leaves it where it was, so insertion order was
-  // first-seen order and the eviction below dropped whoever arrived first rather than
-  // whoever had been quiet longest.
-  rateBuckets.delete(address);
-  rateBuckets.set(address, hits);
+// /l/:id, the badge and the cards, for the same reason.
+app.route("/", share);
 
-  // Map iterates in insertion order, so with the reordering above the oldest entries
-  // are simply the first ones - no sort needed to find them.
-  if (rateBuckets.size > config.limits.rateBuckets) {
-    const excess = Math.floor(config.limits.rateBuckets / 10);
-    let dropped = 0;
-    for (const key of rateBuckets.keys()) {
-      if (dropped++ >= excess) break;
-      rateBuckets.delete(key);
-    }
-  }
+// The built frontend. Hono decodes the path before rejecting `..` segments, which is
+// the part the old hand-rolled version relied on Bun.file not decoding %2e to get
+// right by accident.
+app.use("/*", etag(), serveStatic({ root: config.webDist }));
 
-  return hits.length > config.limits.newListingsPerMinute;
-}
+// Anything the build does not have a file for is a route inside the app.
+app.get("*", indexHandler);

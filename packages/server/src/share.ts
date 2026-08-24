@@ -3,7 +3,7 @@
 // The drawing lives in cards.ts; this is the HTTP layer over it, kept apart from
 // routes.ts because none of it is API surface - it exists for crawlers, chat clients
 // and READMEs, which have their own rules about absolute URLs and escaping.
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { ListingDetail } from "@outmine/protocol";
 import { badgeSvg, cardPng, homeCardSvg, render, standing } from "./cards";
 import { config } from "./config";
@@ -19,6 +19,15 @@ export const origin = (c: { req: { url: string } }) =>
 /** Replaced in index.html. A marker rather than a regex over the head: this runs on
  *  every crawler hit and a parse would be both slower and easier to get wrong. */
 export const OG_MARKER = "<!--og-->";
+
+/** The theme script in index.html has to run before the first paint, so it is inline,
+ *  and CSP has to be told it is ours. A per-request nonce rather than a hash of the
+ *  script: the file is already being rewritten here for the crawler tags, so this
+ *  costs one more substitution and cannot go stale when the script changes. */
+export const NONCE_MARKER = "__CSP_NONCE__";
+
+export const withNonce = (c: Context, html: string) =>
+  html.replaceAll(NONCE_MARKER, c.get("secureHeadersNonce") ?? "");
 
 const detailOf = (id: string): ListingDetail | null => {
   const listing = getListing(id);
@@ -62,7 +71,7 @@ share.get("/l/:id", async (c) => {
   if (!(await index.exists())) return c.text("frontend not built - run: bun run build", 503);
 
   const listing = detailOf(c.req.param("id"));
-  const html = await index.text();
+  const html = withNonce(c, await index.text());
   return c.html(listing ? html.replace(OG_MARKER, listingMeta(listing, origin(c))) : html);
 });
 
