@@ -18,7 +18,8 @@ import { dbAlive, type Listing } from "./db";
 import { clientCount, connectionCount, miningCount, poolHealthy, pushFeed } from "./hub";
 import {
   boardTotals, countClick, createListing, deleteListing, getIcon, getListing, listingRank,
-  searchBoard, setIcon, TargetError, trending, updateListing,
+  searchBoard, setIcon, TargetError, trafficByDay, trafficListings, trafficTop, trending,
+  updateListing, visitsToday,
 } from "./listings";
 import { log } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
@@ -172,6 +173,7 @@ app.get("/api/trending", (c) => c.json(trending() satisfies TrendingItem[]));
 app.get("/api/stats", (c) => {
   const response: StatsResponse = {
     ...boardTotals(),
+    visitsToday: visitsToday(),
     online: clientCount(),
     mining: miningCount(),
     poolConnections: connectionCount(),
@@ -298,6 +300,71 @@ app.get("/r/:id", (c) => {
   c.header("X-Robots-Tag", "noindex, nofollow");
   return c.redirect(url, 302);
 });
+
+// --- traffic -------------------------------------------------------------------------
+
+/** The traffic report, for whoever holds the admin token.
+ *
+ *  A page rather than JSON because a person reads it in a browser, and that is also why
+ *  the token travels in the query string: a browser cannot be asked to send a header.
+ *  The two ways a token in a URL escapes are the Referer of the next click and a cache,
+ *  so both are shut off below.
+ *
+ *  Not public, unlike everything on /stats. Referrer hosts are somebody else's traffic,
+ *  and a public list of them is an invitation to spam it. */
+app.get("/admin/traffic", (c) => {
+  const offered = new URL(c.req.url).searchParams.get("token") ?? "";
+  if (!config.security.adminToken || !secretsMatch(config.security.adminToken, offered)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
+  c.header("X-Robots-Tag", "noindex, nofollow");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("Cache-Control", "no-store");
+  return c.html(trafficPage());
+});
+
+const DAY_MS = 86_400_000;
+
+const percent = (part: number, whole: number) => (whole ? `${((part / whole) * 100).toFixed(1)}%` : "—");
+
+function table(title: string, head: string[], rows: (string | number)[][]): string {
+  const cells = (row: (string | number)[], tag: string) =>
+    row.map((value) => `<${tag}>${Bun.escapeHTML(String(value))}</${tag}>`).join("");
+  if (rows.length === 0) return `<h2>${title}</h2><p>nothing yet</p>`;
+  return `<h2>${title}</h2><table><tr>${cells(head, "th")}</tr>` +
+    `${rows.map((row) => `<tr>${cells(row, "td")}</tr>`).join("")}</table>`;
+}
+
+function trafficPage(): string {
+  const days = trafficByDay(30).map((d) => [
+    new Date(d.day * DAY_MS).toISOString().slice(0, 10),
+    d.visits, d.pages, d.views, d.mines, percent(d.mines, d.visits),
+  ]);
+
+  return `<!doctype html><meta charset="utf-8"><title>outmine traffic</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, monospace; max-width: 52rem; margin: 2rem auto; padding: 0 1rem }
+  h1 { font-size: 1.2rem } h2 { font-size: 1rem; margin-top: 2rem }
+  table { border-collapse: collapse; width: 100% }
+  th, td { text-align: right; padding: 2px 8px; border-bottom: 1px solid #8884 }
+  th:first-child, td:first-child { text-align: left }
+  p { color: #888 }
+</style>
+<h1>outmine traffic</h1>
+<p>Last 30 days. A visit is one page load, counted on the socket the page already
+holds - so nothing here saw a crawler, and nothing here knows who anyone is.</p>
+${table("by day", ["day", "visits", "pageviews", "listing views", "mining starts", "conversion"], days)}
+${table("referrers", ["host", "visits"], trafficTop("ref").map((r) => [r.key, r.n]))}
+${table("pages", ["path", "views"], trafficTop("page").map((r) => [r.key, r.n]))}
+${table(
+  "listings",
+  ["listing", "id", "views (30d)", "clicks (all time)"],
+  trafficListings().map((l) => [l.name, l.id, l.views, l.clicks]),
+)}
+<p>Clicks are a running total on the listing and were never bucketed by day, so they do
+not divide into 30 days of views. A listing taken down since is not listed.</p>`;
+}
 
 // --- pages -------------------------------------------------------------------------
 

@@ -8,7 +8,7 @@ import {
   buildHeader, bytesToHex, diffToTarget, NONCE_SUBMIT_LITTLE_ENDIAN, type StratumJob,
 } from "./blockheader";
 import { config } from "./config";
-import { countBoard, creditShares, listBoard, listingExists } from "./listings";
+import { countBoard, countHit, creditShares, listBoard, listingExists } from "./listings";
 import { log, makeThrottledLog } from "./log";
 import { StratumClient } from "./stratum";
 
@@ -31,6 +31,13 @@ export type Client = {
   badSubmits: number;
   messagesThisSecond: number;
   secondStartedAt: number;
+  /** Traffic bookkeeping, per socket. `counted` and `mined` make a visit and a
+   *  conversion count once however many times the browser says them; `lastView` drops a
+   *  repeat of the page already counted, which is the only way a client could inflate
+   *  these numbers within its message rate. */
+  counted: boolean;
+  mined: boolean;
+  lastView: string | null;
 };
 
 type PoolConnection = {
@@ -70,6 +77,7 @@ export function addClient(ws: ServerWebSocket<SocketData>): Client | null {
   const client: Client = {
     ws, listingId: null, conn: null, extranonce2Index: 0,
     hashrate: 0, badSubmits: 0, messagesThisSecond: 0, secondStartedAt: 0,
+    counted: false, mined: false, lastView: null,
   };
   clients.add(client);
   send(client, { t: "board", ...boardSnapshot() });
@@ -107,6 +115,8 @@ export function handleMessage(client: Client, raw: string) {
       // client must not be able to claim the whole leaderboard's hashrate.
       client.hashrate = Math.min(config.limits.maxReportedHashrate, Math.max(0, Number(msg.hs) || 0));
       return;
+    case "view":
+      return countView(client, msg);
     default:
       return;
   }
@@ -119,6 +129,63 @@ function overMessageRate(client: Client): boolean {
     client.messagesThisSecond = 0;
   }
   return ++client.messagesThisSecond > config.limits.maxMessagesPerSecond;
+}
+
+// --- traffic ------------------------------------------------------------------
+// Counted here because the socket is already open and already origin-checked and rate
+// limited. Everything below turns what the browser said into one of a fixed set of
+// keys: (day, kind, key) is a primary key, so an unbounded key is an unbounded table.
+
+const PAGES = new Set(["/", "/about", "/rules", "/faq", "/stats"]);
+const LISTING_PATH = /^\/l\/([a-z0-9]{1,24})$/i;
+
+/** The key a path is counted under. Whitelisted rather than stored as sent - a path is
+ *  whatever the address bar contained. Exported for its test. */
+export function pageKey(path: string): string {
+  if (LISTING_PATH.test(path)) return "/l/:id";
+  return PAGES.has(path) ? path : "/other";
+}
+
+/** The host a visitor came from, never the full URL: which page on Hacker News someone
+ *  was reading is their business, and the host is the whole answer to "who sends us
+ *  people". Our own pages, and anything that will not parse, drop out. */
+export function refHost(ref: string | undefined, self: string): string {
+  if (!ref) return "";
+  let host: string;
+  try {
+    host = new URL(ref).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+  if (!host || host === self) return "";
+  return /^[a-z0-9.-]{1,100}$/.test(host) ? host : "";
+}
+
+/** Our own hostname, so a click from one of our pages is not a referral. Empty when
+ *  PUBLIC_ORIGIN is unset, which is development, where there is nothing to filter. */
+const SELF_HOST = refHost(config.publicOrigin, "");
+
+function countView(client: Client, msg: { path?: unknown; ref?: unknown; first?: unknown }) {
+  const path = String(msg.path ?? "");
+
+  // Once per page load, not once per socket: the browser reconnects every couple of
+  // seconds while the server is restarting, and each of those is the same visit.
+  if (msg.first && !client.counted) {
+    client.counted = true;
+    countHit("visit");
+    const host = refHost(typeof msg.ref === "string" ? msg.ref : undefined, SELF_HOST);
+    if (host) countHit("ref", host);
+  }
+
+  if (path === client.lastView) return; // the page already counted, said again
+  client.lastView = path;
+
+  countHit("page", pageKey(path));
+
+  // Checked against the table rather than trusted. The id becomes part of a primary
+  // key, so a made-up one is a row that stays there.
+  const listing = LISTING_PATH.exec(path)?.[1]?.toLowerCase();
+  if (listing && listingExists(listing)) countHit("listing", listing);
 }
 
 // --- pool connections ---------------------------------------------------------
@@ -255,6 +322,12 @@ function startMining(client: Client, listingId: string) {
   stopMining(client);
   const conn = joinConnection(client);
   if (!conn) return send(client, { t: "error", message: "mining is at capacity, try again shortly" });
+
+  // Once per socket, so switching listings is not a second conversion.
+  if (!client.mined) {
+    client.mined = true;
+    countHit("mine");
+  }
 
   client.listingId = listingId;
   client.badSubmits = 0;

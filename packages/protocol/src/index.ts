@@ -69,7 +69,14 @@ export type ClientMessage =
   | { t: "mine"; listingId: string }
   | { t: "stop" }
   | { t: "share"; jobId: string; nonce: number }
-  | { t: "hashrate"; hs: number };
+  | { t: "hashrate"; hs: number }
+  /** One page a visitor looked at, sent on the socket that is already open.
+   *
+   *  No pixel, no third party, nothing an ad blocker has a rule for - and a crawler,
+   *  which never opens a socket, never counts as a visit. `first` is set once per page
+   *  load rather than once per socket, so a reconnect does not count a second visit,
+   *  and `ref` rides along with it because document.referrer is only meaningful then. */
+  | { t: "view"; path: string; ref?: string; first?: boolean };
 
 /** Longest side of an uploaded icon. The board draws it at 56 CSS pixels, so 128
  *  covers a 2x display with nothing left over. The browser resizes to exactly this
@@ -127,6 +134,9 @@ export type StatsResponse = {
   score: number;
   clicks: number;
   shares24h: number;
+  /** Page loads counted today, UTC. The only traffic number that is public: who sends
+   *  us people, and which listing they looked at, is nobody else's business. */
+  visitsToday: number;
   online: number;
   mining: number;
   poolConnections: number;

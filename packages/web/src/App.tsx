@@ -26,7 +26,9 @@ import {
 
 export default function App() {
   const path = usePath();
-  const miner = useMiner();
+  // The path goes in so the socket can report it: pageviews ride the connection that
+  // is already there rather than a second channel of their own.
+  const miner = useMiner(path);
   const [consented, setConsented] = useState(hasConsented);
   // The listing this browser mined for last time. Offered as a button, never acted on:
   // starting the CPU on page load, even with consent stored from an earlier visit, is

@@ -19,6 +19,7 @@ export function Stats() {
         <StatTile size="lg" label="listings" value={String(stats.listings)} />
         <StatTile size="lg" label="on the board" value={String(stats.onBoard)} />
         <StatTile size="lg" label="outbound clicks" value={fmt(stats.clicks)} />
+        <StatTile size="lg" label="visits today" value={fmt(stats.visitsToday)} />
         <StatTile size="lg" label="online now" value={String(stats.online)} />
         <StatTile size="lg" label="mining now" value={String(stats.mining)} />
         <StatTile size="lg" label="pool sockets" value={String(stats.poolConnections)} />
@@ -26,7 +27,8 @@ export function Stats() {
       <p className="mt-6 text-xs text-muted-foreground">
         No figure in currency: the exchange rate is not ours to quote and an estimate would read as
         a promise. A share is one unit of work the pool accepted, and a point is pool difficulty
-        scaled so the numbers are readable.
+        scaled so the numbers are readable. A visit is a page load, not a person — nothing is
+        stored here that could tell two people apart.
       </p>
     </section>
   );

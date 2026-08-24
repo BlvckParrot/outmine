@@ -16,6 +16,11 @@ const EMPTY: BoardSnapshot = {
 const RECONNECT_MS = 2_000;
 const HASHRATE_REPORT_MS = 3_000;
 
+/** Module scope rather than a ref, so it survives a reconnect and only resets on a real
+ *  page load - which is exactly what "one visit" means. The referrer rides along with
+ *  it because it describes the load, not the page. */
+let firstView = true;
+
 export type MinerSession = {
   board: BoardSnapshot;
   status: string;
@@ -31,7 +36,7 @@ export type MinerSession = {
   stop: () => void;
 };
 
-export function useMiner(): MinerSession {
+export function useMiner(path: string): MinerSession {
   const [board, setBoard] = useState<BoardSnapshot>(EMPTY);
   const [status, setStatus] = useState("connecting…");
   const [mineFor, setMineFor] = useState<string | null>(null);
@@ -49,6 +54,9 @@ export function useMiner(): MinerSession {
 
   const ws = useRef<WebSocket | null>(null);
   const miner = useRef<Miner | null>(null);
+  /** A pageview composed before the socket was open. The first one always is: the
+   *  effect below runs on the first render and the handshake has not finished yet. */
+  const pendingView = useRef<string | null>(null);
   // Read inside the socket callbacks, which are created once and would otherwise close
   // over the first render's value.
   const mineForRef = useRef<string | null>(null);
@@ -73,6 +81,10 @@ export function useMiner(): MinerSession {
         // without this the workers keep hashing into nothing: the UI still shows a
         // healthy hashrate while every share is discarded.
         if (mineForRef.current) socket.send(JSON.stringify({ t: "mine", listingId: mineForRef.current }));
+        if (pendingView.current) {
+          socket.send(pendingView.current);
+          pendingView.current = null;
+        }
       };
       socket.onclose = () => {
         setStatus("reconnecting…");
@@ -92,6 +104,20 @@ export function useMiner(): MinerSession {
       ws.current?.close();
     };
   }, []);
+
+  // One line per page, down the socket that is already open. No pixel and no third
+  // party: the only thing that ever hears about a visit is the server serving it.
+  useEffect(() => {
+    const message = JSON.stringify({
+      t: "view",
+      path,
+      ...(firstView ? { first: true, ref: document.referrer } : {}),
+    });
+    firstView = false;
+
+    if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(message);
+    else pendingView.current = message; // sent by onopen
+  }, [path]);
 
   // Report our hashrate so the board can show per-listing totals.
   //

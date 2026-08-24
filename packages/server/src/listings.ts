@@ -418,3 +418,62 @@ export function creditShares(batch: ShareBatch): { id: string; name: string }[] 
 
   return passed;
 }
+
+// --- traffic ------------------------------------------------------------------------
+// What the site gets asked for, counted as it is asked. Aggregates only: a day, a kind
+// and a key, and nothing anywhere that says who - no address, no cookie, no per-request
+// row that could be joined back into one.
+
+const today = () => Math.floor(Date.now() / 86_400_000);
+
+/** One hit. The primary key does the aggregating, so there is nothing to flush and no
+ *  event log to prune later.
+ *
+ *  ponytail: one write per pageview. SQLite in WAL takes thousands a second and this
+ *  board will not; if it ever does, buffer it the way the hub buffers shares. */
+export const countHit = (kind: string, key = "") =>
+  db.query(
+    `INSERT INTO traffic (day, kind, key, n) VALUES (?, ?, ?, 1)
+     ON CONFLICT (day, kind, key) DO UPDATE SET n = n + 1`,
+  ).run(today(), kind, key);
+
+export type TrafficDay = {
+  day: number; visits: number; pages: number; views: number; mines: number;
+};
+
+/** One row per day with the kinds pivoted into columns, so the report is a loop over
+ *  this rather than four queries stitched together by hand. */
+export const trafficByDay = (days = 30): TrafficDay[] =>
+  db.query<TrafficDay, [number]>(
+    `SELECT day,
+            COALESCE(SUM(n) FILTER (WHERE kind = 'visit'), 0)   AS visits,
+            COALESCE(SUM(n) FILTER (WHERE kind = 'page'), 0)    AS pages,
+            COALESCE(SUM(n) FILTER (WHERE kind = 'listing'), 0) AS views,
+            COALESCE(SUM(n) FILTER (WHERE kind = 'mine'), 0)    AS mines
+     FROM traffic WHERE day >= ?
+     GROUP BY day ORDER BY day DESC`,
+  ).all(today() - (days - 1));
+
+/** The busiest keys of one kind - referrer hosts, paths. */
+export const trafficTop = (kind: string, days = 30, limit = 20) =>
+  db.query<{ key: string; n: number }, [string, number, number]>(
+    `SELECT key, SUM(n) AS n FROM traffic WHERE kind = ? AND day >= ?
+     GROUP BY key ORDER BY n DESC LIMIT ?`,
+  ).all(kind, today() - (days - 1), limit);
+
+/** Views per listing beside the outbound clicks that listing has earned. A listing
+ *  taken down since is dropped rather than shown as a bare id: the join is the filter.
+ *  `clicks` is all-time - the column is a running total and was never bucketed by day. */
+export const trafficListings = (days = 30, limit = 20) =>
+  db.query<{ id: string; name: string; views: number; clicks: number }, [number, number]>(
+    `SELECT l.id, l.name, SUM(t.n) AS views, l.clicks
+     FROM traffic t JOIN listings l ON l.id = t.key
+     WHERE t.kind = 'listing' AND t.day >= ?
+     GROUP BY l.id ORDER BY views DESC LIMIT ?`,
+  ).all(today() - (days - 1), limit);
+
+/** The one traffic number that is public, on /stats with everything else. */
+export const visitsToday = (): number =>
+  db.query<{ n: number }, [number]>(
+    `SELECT COALESCE(SUM(n), 0) AS n FROM traffic WHERE kind = 'visit' AND day = ?`,
+  ).get(today())!.n;
