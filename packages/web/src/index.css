@@ -96,5 +96,49 @@ body {
 }
 
 /* The two range inputs in the mining panel are the only native controls with a
-   colour of their own. */
+   colour of their own. A native track is grey on both sides of the thumb, so the
+   filled part is a gradient stop the input carries in --fill; the thumb is drawn
+   twice because -webkit- and -moz- do not accept a shared selector. */
 input[type="range"] { accent-color: var(--primary); }
+
+input[type="range"].dial {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 0.625rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--primary) var(--fill, 0%),
+    var(--muted) var(--fill, 0%)
+  );
+}
+input[type="range"].dial::-moz-range-track { background: transparent; }
+
+input[type="range"].dial::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  background: var(--primary);
+  border: 3px solid var(--card);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 0.3);
+  transition: transform 0.1s ease-out;
+}
+input[type="range"].dial::-moz-range-thumb {
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  background: var(--primary);
+  border: 3px solid var(--card);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 0.3);
+  transition: transform 0.1s ease-out;
+}
+input[type="range"].dial:hover::-webkit-slider-thumb { transform: scale(1.15); }
+input[type="range"].dial:hover::-moz-range-thumb { transform: scale(1.15); }
+input[type="range"].dial:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}

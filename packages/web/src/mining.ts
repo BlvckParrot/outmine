@@ -33,7 +33,11 @@ export class Miner {
       worker.postMessage({ t: "throttle", value: this.#throttle });
       this.#workers.push(worker);
     }
-    if (this.#job) this.setJob(this.#job);
+    // Straight to the workers rather than through setJob, which drops a job the last
+    // set of workers was already on - and these are new ones, hashing nothing. Without
+    // it, moving the threads slider parked the miner at zero until the pool happened
+    // to send fresh work, which can be a minute.
+    if (this.#job) this.#dispatch(this.#job);
   }
 
   setJob(job: Job) {
@@ -43,6 +47,10 @@ export class Miner {
     // fresh extranonce1, so the same job id can carry a genuinely different header.
     if (this.#job?.header === job.header) return;
     this.#job = job;
+    this.#dispatch(job);
+  }
+
+  #dispatch(job: Job) {
     this.#workers.forEach((w, i) =>
       w.postMessage({ t: "job", job, threadIndex: i, threadCount: this.#workers.length }),
     );

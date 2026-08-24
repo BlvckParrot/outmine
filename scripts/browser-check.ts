@@ -67,6 +67,18 @@ const minersShown = await minerRow
   .catch(() => false);
 console.log(`miners shown on a row: ${minersShown}`);
 
+// Moving the threads slider tears the worker pool down and builds it again. The new
+// workers used to be handed nothing - setJob dropped the job as a repeat of the one the
+// old workers had - so the miner sat at zero until the pool happened to send fresh work.
+const threadsSlider = page.locator('input[type="range"]').first();
+await threadsSlider.fill("2");
+let threadChangeKeepsMining = false;
+for (let i = 0; i < 8 && !threadChangeKeepsMining; i++) {
+  await page.waitForTimeout(2500);
+  threadChangeKeepsMining = Number.parseFloat((await readStat("hashrate")) ?? "0") > 0;
+}
+console.log(`hashrate after moving the threads slider: ${await readStat("hashrate")}`);
+
 // Navigating must not stop mining. The socket and the workers live in the shell, so a
 // page that owned them - the obvious structure - would silently kill the miner here.
 await page.getByRole("link", { name: "About", exact: true }).click();
@@ -90,6 +102,7 @@ await page.screenshot({ path: `${SHOT}/04-returning-visitor.png` });
 const checks = {
   accepted: finalAccepted > 0,
   minersShown,
+  threadChangeKeepsMining,
   survivedNavigation: onAbout && stillMining && acceptedAfterNav >= finalAccepted,
   consentRemembered: !bannerBack,
   resumeOffered,

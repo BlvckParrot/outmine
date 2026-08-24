@@ -2,19 +2,26 @@
 import type { BoardEntry } from "@outmine/protocol";
 import { apiUrl } from "../api";
 
+const TONE = { live: "text-live", destructive: "text-destructive" } as const;
+
 /** A number with its label. The mining panel, the stats page and a listing all show
  *  grids of these; they were three copies of the same markup.
  *
  *  The value comes first in the DOM and the label second - browser-check finds a tile
  *  by its label and then reads the sibling above it. */
-export const StatTile = ({ label, value, size = "md" }: {
+export const StatTile = ({ label, value, size = "md", tone }: {
   label: string;
   value: string;
   /** "lg" is the stats page, which has nothing else on it to compete with. */
   size?: "sm" | "md" | "lg";
+  /** Colours the number. Only the mining panel has counters that are good or bad on
+   *  their own - a share accepted is the whole point, a share rejected is a fault. */
+  tone?: keyof typeof TONE;
 }) => (
   <div className={`rounded-xl bg-muted ${size === "sm" ? "p-2" : "p-3"}`}>
-    <div className={`font-mono font-bold tabular-nums ${size === "lg" ? "text-2xl" : "text-lg"}`}>
+    <div className={`font-mono font-bold tabular-nums ${size === "lg" ? "text-2xl" : "text-lg"} ${
+      tone ? TONE[tone] : ""
+    }`}>
       {value}
     </div>
     <div className="mt-1 text-[10px] tracking-wider text-muted-foreground uppercase">{label}</div>
