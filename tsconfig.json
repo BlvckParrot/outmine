@@ -9,8 +9,7 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "types": [
-      "bun",
-      "vite/client"
+      "bun"
     ],
     "jsx": "react-jsx",
     "strict": true,
@@ -24,15 +23,14 @@
     "noEmit": true
   },
   "include": [
-    "src",
-    "web/src",
-    "wasm/*.ts",
-    "scripts",
-    "vite.config.ts"
+    "packages/*/src",
+    "packages/*/*.ts",
+    "scripts"
   ],
   "exclude": [
     "node_modules",
-    "wasm/build",
-    "web/dist"
+    "packages/wasm/build",
+    "packages/wasm/vendor",
+    "packages/web/dist"
   ]
 }

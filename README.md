@@ -93,19 +93,28 @@ Back up the database on a schedule:
 `ADMIN_TOKEN` enables `DELETE /api/listings/:id`, the only way to take a listing down
 short of editing SQLite by hand.
 
+`ALLOWED_ORIGINS` is a security control, not a convenience. The mining socket accepts
+any browser that reaches it, so without an origin policy another site could run
+`new WebSocket("wss://your-host/ws")` and mine on its own visitors' CPUs against your
+pool account, skipping the consent banner entirely. Left empty, only same-origin
+requests are accepted, so an unconfigured deployment is closed rather than open. A
+missing `Origin` header is allowed through: browsers always send one on a WebSocket
+handshake, so the guard still holds, and non-browser clients have nobody else's CPU to
+spend.
+
 ## Layout
 
 ```
-wasm/          MinotaurX hasher, compiled from cpuminer-multi with emcc
-src/           Bun server: Hono API, stratum client, mining hub, SQLite
-src/protocol.ts  the WebSocket contract, imported by both server and browser
-web/           Vite + React frontend and the mining web worker
-scripts/       backup, browser check, algorithm ranking
+packages/protocol/   the WebSocket contract, imported by both server and browser
+packages/wasm/       MinotaurX hasher, compiled from cpuminer-multi with emcc
+packages/server/     Bun server: Hono API, stratum client, mining hub, SQLite
+packages/web/        Vite + React frontend and the mining web worker
+scripts/             backup, browser check, algorithm ranking
 ```
 
-One process, one SQLite file, one runtime dependency (`hono`). No workspaces: there is
-nothing here that is versioned or deployed separately, so there are no boundaries for a
-monorepo to manage.
+Bun workspaces. Still one deployed process, one SQLite file and one runtime dependency
+(`hono`); the split is about keeping the boundaries honest — the browser cannot reach
+into server code, and the shared contract is a package rather than a relative path.
 
 The WASM exports one function, `mine(header, target, nonceStart, nonceEnd)`. The nonce
 loop lives in C because crossing the JS/WASM boundary per hash costs more than a hash.
@@ -115,22 +124,46 @@ only ever spins nonces.
 ## Running it
 
 ```bash
-cp .env.example .env      # set POOL_USER to your BTC address
-./wasm/build.sh           # needs emscripten; clones cpuminer-multi on first run
+cp .env.example .env   # set POOL_USER to your BTC address
 bun install
-bun run build:web
-bun run start
+bun run build          # WASM then frontend, in dependency order
+bun start
 ```
+
+The WASM build needs emscripten (`brew install emscripten`) and clones cpuminer-multi
+on first run.
 
 Deploy with `docker compose up -d` — Caddy handles TLS, the app is one Bun process,
 SQLite lives in a bind mount.
 
+## Developing
+
+```bash
+bun run dev            # API and Vite together; Ctrl+C stops both
+```
+
+Open http://localhost:5173. The browser talks to the API on :3000 **directly** rather
+than through a Vite proxy, because proxying a long-lived WebSocket to a server that
+`bun --watch` restarts on every save floods the terminal with EPIPE. `VITE_API_ORIGIN`
+in `packages/web/.env.development` points the client at it; production leaves the
+variable unset and everything is same-origin again.
+
+Cross-origin in development means `ALLOWED_ORIGINS=http://localhost:5173` has to be in
+your `.env`.
+
+Restarting the server mid-session is fine: the client reconnects and resumes mining for
+the same listing on its own.
+
 ## Tests
 
 ```bash
-bun run check             # typecheck, then hash vectors, framing, header assembly, normalizer
-POOL_USER=<addr> bun test src/hub.integration.test.ts   # real shares against zpool
-BASE=http://localhost:3000 bun scripts/browser-check.ts # consent, mine, shares land
+bun run check     # typecheck, then hash vectors, framing, header assembly, normalizer
+
+# Real shares against zpool; needs a server running and an explicit opt-in, because
+# Bun auto-loads .env and POOL_USER alone would make `check` demand a live pool.
+INTEGRATION=1 bun test packages/server/src/hub.integration.test.ts
+
+BASE=http://localhost:5173 bun scripts/browser-check.ts  # consent, mine, shares land
 ```
 
 Two tests carry most of the weight. The hash vector test pins the WASM build against

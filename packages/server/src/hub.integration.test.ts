@@ -4,7 +4,7 @@
 //
 // Skipped unless POOL_USER is set, since it needs a payout address and network.
 import { expect, test } from "bun:test";
-import { createModule } from "../wasm/module";
+import { createModule } from "@outmine/wasm";
 
 // Explicit opt-in, not merely "POOL_USER is set": Bun auto-loads .env, so keying off
 // the payout address alone makes `bun run check` demand a live server and a live pool.

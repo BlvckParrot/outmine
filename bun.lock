@@ -4,20 +4,46 @@
   "workspaces": {
     "": {
       "name": "outmine",
+      "devDependencies": {
+        "@types/bun": "^1.3.4",
+        "playwright": "1.61.1",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/protocol": {
+      "name": "@outmine/protocol",
+      "version": "0.0.0",
+    },
+    "packages/server": {
+      "name": "@outmine/server",
+      "version": "0.0.0",
       "dependencies": {
+        "@outmine/protocol": "workspace:*",
         "hono": "^4.13.3",
       },
       "devDependencies": {
+        "@outmine/wasm": "workspace:*",
+      },
+    },
+    "packages/wasm": {
+      "name": "@outmine/wasm",
+      "version": "0.0.0",
+    },
+    "packages/web": {
+      "name": "@outmine/web",
+      "version": "0.0.0",
+      "dependencies": {
+        "@outmine/protocol": "workspace:*",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8",
+      },
+      "devDependencies": {
+        "@outmine/wasm": "workspace:*",
         "@tailwindcss/vite": "^4.3.3",
-        "@types/bun": "^1.4.0",
         "@types/react": "^19.2.18",
         "@types/react-dom": "^19.2.4",
         "@vitejs/plugin-react": "^6.1.0",
-        "playwright": "1.61.1",
-        "react": "^19.2.8",
-        "react-dom": "^19.2.8",
         "tailwindcss": "^4.3.3",
-        "typescript": "^7.0.2",
         "vite": "^8.2.2",
       },
     },
@@ -32,6 +58,14 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@outmine/protocol": ["@outmine/protocol@workspace:packages/protocol"],
+
+    "@outmine/server": ["@outmine/server@workspace:packages/server"],
+
+    "@outmine/wasm": ["@outmine/wasm@workspace:packages/wasm"],
+
+    "@outmine/web": ["@outmine/web@workspace:packages/web"],
 
     "@oxc-project/types": ["@oxc-project/types@0.146.0", "", {}, "sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA=="],
 

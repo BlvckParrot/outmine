@@ -6,7 +6,7 @@ import type { ServerWebSocket } from "bun";
 import { db } from "./db";
 import { buildHeader, bytesToHex, diffToTarget, type StratumJob } from "./blockheader";
 import { getBoard, getPending, VISIBILITY_THRESHOLD } from "./listings";
-import type { BoardSnapshot, ServerMessage } from "./protocol";
+import type { BoardSnapshot, ServerMessage } from "@outmine/protocol";
 import { StratumClient } from "./stratum";
 
 const POOL_HOST = process.env.POOL_HOST ?? "minotaurx.mine.zpool.ca";

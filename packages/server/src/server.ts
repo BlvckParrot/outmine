@@ -1,11 +1,12 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { db } from "./db";
 import {
   addClient, clientCount, connectionCount, flush, handleMessage, log, poolHealthy,
   pushFeed, removeClient, startLoops, type SocketData,
 } from "./hub";
 import { createListing, getBoard, getListing, getPending, TargetError, updateListing, VISIBILITY_THRESHOLD } from "./listings";
-import type { BoardSnapshot } from "./protocol";
+import type { BoardSnapshot } from "@outmine/protocol";
 
 // Mining with no payout address credits nobody and nothing complains. Refusing to
 // start is louder and cheaper than discovering it on the pool dashboard next week.
@@ -16,7 +17,39 @@ if (!process.env.POOL_USER) {
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
+/** Origins allowed to call the API and to open a mining socket.
+ *
+ *  This is a security control, not a development convenience. Without it any site
+ *  could run `new WebSocket("wss://outmine…/ws")` and mine on its own visitors' CPUs
+ *  against our pool account, skipping the consent banner entirely - which is the one
+ *  thing separating this project from cryptojacking. */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+function originAllowed(origin: string | undefined, requestUrl: string): boolean {
+  // Browsers always send Origin on a WebSocket handshake, so absence means a
+  // non-browser client (our integration tests, curl). Those have no third party's CPU
+  // to spend, so they are not the threat this guards against.
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.length > 0) return ALLOWED_ORIGINS.includes(origin);
+  // Unconfigured: same origin only, so a deployment without the variable set is not
+  // open to everyone by default.
+  try {
+    return new URL(origin).host === new URL(requestUrl).host;
+  } catch {
+    return false;
+  }
+}
+
 const app = new Hono();
+
+app.use("/api/*", cors({
+  origin: (origin, c) => (originAllowed(origin, c.req.url) ? origin : null),
+  allowHeaders: ["content-type", "x-edit-token", "x-admin-token"],
+  allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+}));
 
 app.get("/health", (c) => {
   try {
@@ -133,13 +166,17 @@ app.get("/r/:id", (c) => {
 });
 
 // SPA: everything else is the built frontend, with index.html as the fallback.
+// Resolved from this file so it works from any working directory; WEB_DIST overrides
+// it where the image lays the packages out differently.
+const WEB_DIST = process.env.WEB_DIST ?? new URL("../../web/dist", import.meta.url).pathname;
+
 app.get("*", async (c) => {
   const path = new URL(c.req.url).pathname;
-  const file = Bun.file(`web/dist${path === "/" ? "/index.html" : path}`);
+  const file = Bun.file(`${WEB_DIST}${path === "/" ? "/index.html" : path}`);
   if (await file.exists()) return new Response(file);
-  const index = Bun.file("web/dist/index.html");
+  const index = Bun.file(`${WEB_DIST}/index.html`);
   if (await index.exists()) return new Response(index);
-  return c.text("frontend not built - run: bun run build:web", 503);
+  return c.text("frontend not built - run: bun run build", 503);
 });
 
 startLoops();
@@ -148,6 +185,11 @@ const server = Bun.serve<SocketData>({
   port: Number(process.env.PORT ?? 3000),
   fetch(req, srv) {
     if (new URL(req.url).pathname === "/ws") {
+      const origin = req.headers.get("origin") ?? undefined;
+      if (!originAllowed(origin, req.url)) {
+        log("ws_origin_rejected", { origin });
+        return new Response("origin not allowed", { status: 403 });
+      }
       const data: SocketData = { client: null };
       return srv.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
     }

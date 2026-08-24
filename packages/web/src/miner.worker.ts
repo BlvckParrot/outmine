@@ -1,6 +1,6 @@
 // One worker = one mining thread. Each gets its own WASM instance and its own
 // slice of the nonce space, so threads never duplicate work on the same job.
-import type { OutmineModule } from "../../wasm/module";
+import type { OutmineModule } from "@outmine/wasm";
 
 type Job = { jobId: string; header: string; target: string };
 
@@ -13,10 +13,14 @@ let nonce = 0;
 let throttle = 0; // 0 = flat out, 0.8 = idle 80% of the time
 let running = false;
 
-// Loaded at runtime from web/public, not bundled: emscripten's glue resolves
-// mine.wasm relative to itself and Vite must not rewrite that path. The URL goes
-// through a variable so TypeScript does not try to resolve it either.
-const WASM_URL = "/mine.mjs";
+// Loaded at runtime rather than bundled: emscripten's glue resolves mine.wasm
+// relative to itself, so the path must reach the browser untouched. Going through a
+// variable also stops TypeScript trying to resolve it.
+//
+// Absolute, not root-relative: given "/mine.mjs" Vite's dev server treats the import
+// as one of its own modules and serves it as /mine.mjs?import, which the glue does
+// not survive. A full URL is left alone, in dev and in the build alike.
+const WASM_URL = new URL("/mine.mjs", self.location.origin).href;
 
 const ready = (import(/* @vite-ignore */ WASM_URL) as Promise<{
   default: () => Promise<OutmineModule>;

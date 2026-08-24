@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { apiUrl, wsUrl } from "./api";
 import { Miner } from "./mining";
-import { POINT_SCALE, type BoardEntry, type BoardSnapshot, type ServerMessage } from "../../src/protocol";
+import { POINT_SCALE, type BoardSnapshot, type ServerMessage } from "@outmine/protocol";
 
 const fmt = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : Math.round(n).toString();
@@ -24,6 +25,10 @@ export default function App() {
 
   const ws = useRef<WebSocket | null>(null);
   const miner = useRef<Miner | null>(null);
+  // Read inside the socket callbacks, which are created once and would otherwise
+  // close over the first render's value.
+  const mineForRef = useRef<string | null>(null);
+  mineForRef.current = mineFor;
 
   useEffect(() => {
     miner.current = new Miner(
@@ -36,9 +41,15 @@ export default function App() {
   useEffect(() => {
     let closed = false;
     const connect = () => {
-      const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+      const socket = new WebSocket(wsUrl("/ws"));
       ws.current = socket;
-      socket.onopen = () => setStatus("connected");
+      socket.onopen = () => {
+        setStatus("connected");
+        // Resume after a drop. The server forgets everything about a closed socket, so
+        // without this the workers keep hashing into nothing: the UI still shows a
+        // healthy hashrate while every share is discarded.
+        if (mineForRef.current) socket.send(JSON.stringify({ t: "mine", listingId: mineForRef.current }));
+      };
       socket.onclose = () => {
         setStatus("reconnecting…");
         if (!closed) setTimeout(connect, 2000);
@@ -136,7 +147,7 @@ export default function App() {
                   {entry.name[0]?.toUpperCase()}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <a href={`/r/${entry.id}`} className="truncate font-semibold text-white hover:underline">
+                  <a href={apiUrl(`/r/${entry.id}`)} className="truncate font-semibold text-white hover:underline">
                     {entry.name}
                   </a>
                   <p className="truncate text-xs text-zinc-500">{entry.tagline || entry.target}</p>
@@ -287,7 +298,7 @@ function SubmitForm() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch("/api/listings", {
+    const res = await fetch(apiUrl("/api/listings"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind, target, name, tagline }),

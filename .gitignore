@@ -1,6 +1,8 @@
 node_modules/
-vendor/
-wasm/build/
-web/dist/
+packages/wasm/vendor/
+packages/wasm/build/
+packages/web/dist/
+packages/web/public/mine.mjs
+packages/web/public/mine.wasm
 data/
 .env

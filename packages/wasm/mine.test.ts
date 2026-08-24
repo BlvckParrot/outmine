@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { createModule } from "./module";
 
-// Reference vectors produced by wasm/build/vector, the native build of the
+// Reference vectors produced by build/vector, the native build of the
 // same C sources. A WASM build that disagrees here is silently mining garbage:
 // the pool rejects every share and it looks like a network fault.
 const VECTORS: [string, string][] = [
@@ -41,9 +41,12 @@ test.each(VECTORS)("minotaurx hash of %s", (header, expected) => {
 });
 
 test("vectors still match the native build", async () => {
-  if (!existsSync("wasm/build/vector")) return; // built by wasm/build.sh
+  // Anchored to this file, not the working directory: `bun test` runs from the repo
+  // root while `bun --filter` runs from the package.
+  const vector = `${import.meta.dir}/build/vector`;
+  if (!existsSync(vector)) return; // built by build.sh
   for (const [header, expected] of VECTORS) {
-    const proc = Bun.spawnSync(["wasm/build/vector", header]);
+    const proc = Bun.spawnSync([vector, header]);
     expect(proc.stdout.toString().trim()).toBe(expected);
   }
 });

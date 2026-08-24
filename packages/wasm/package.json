@@ -1,0 +1,11 @@
+{
+  "name": "@outmine/wasm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./module.ts" },
+  "scripts": {
+    "build": "./build.sh",
+    "bench": "bun bench.ts"
+  }
+}
