@@ -3,7 +3,6 @@
 // what the API does.
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
 import { etag } from "hono/etag";
 import { NONCE, secureHeaders } from "hono/secure-headers";
@@ -15,7 +14,7 @@ import type {
 } from "@outmine/protocol";
 import { config } from "./config";
 import { dbAlive, type Listing } from "./db";
-import { clientCount, connectionCount, miningCount, poolHealthy, pushFeed } from "./hub";
+import { clientCount, connectionCount, loopLag, miningCount, poolHealthy, pushFeed } from "./hub";
 import {
   boardTotals, countClick, createListing, deleteListing, getIcon, getListing, listingRank,
   searchBoard, setIcon, TargetError, trafficByDay, trafficListings, trafficTop, trending,
@@ -146,8 +145,12 @@ app.get("/health", (c) => {
   return c.json({
     ok: true,
     clients: clientCount(),
+    mining: miningCount(),
     poolConnections: connectionCount(),
     poolHealthy: poolHealthy(),
+    // How late the broadcast loop ran. Everything in this process shares one thread, so
+    // this is the number that says whether it is keeping up.
+    lagMs: loopLag(),
   });
 });
 
@@ -415,13 +418,10 @@ async function indexHandler(c: Context) {
   return c.html(withNonce(c, (await index.text()).replace(OG_MARKER, () => siteMeta(origin(c)))));
 }
 
-// Before serveStatic, which would otherwise answer "/" with the file itself: its
-// default document is index.html, and the copy on disk carries the marker rather than
-// the tags, so the home page would go out without an og:image.
-// Both spellings, or serveStatic answers /index.html with the file as it sits on disk:
-// og marker unreplaced, and a nonce placeholder that matches no nonce, so the CSP
-// blocks the theme script and a dark-theme visitor gets the white flash it exists to
-// prevent.
+// Both spellings, and index.html is kept out of the native routes in server.ts, or the
+// file goes out as it sits on disk: og marker unreplaced, and a nonce placeholder that
+// matches no nonce - so the CSP blocks the theme script and a dark-theme visitor gets
+// the white flash it exists to prevent.
 app.get("/", indexHandler);
 app.get("/index.html", indexHandler);
 
@@ -434,10 +434,12 @@ app.use("/badge/*", etag());
 // /l/:id, the badge and the cards, for the same reason.
 app.route("/", share);
 
-// The built frontend. Hono decodes the path before rejecting `..` segments, which is
-// the part the old hand-rolled version relied on Bun.file not decoding %2e to get
-// right by accident.
-app.use("/*", etag(), serveStatic({ root: config.webDist }));
-
-// Anything the build does not have a file for is a route inside the app.
+// The built frontend is not here any more: server.ts hands dist to Bun.serve as native
+// routes, which stream with sendfile and answer ETag, Last-Modified, 304 and Range
+// without entering JavaScript. Those routes are matched before this app is ever
+// consulted, so what reaches the line below is a path with no file behind it.
+//
+// index.html stays ours: it carries the crawler tags and the CSP nonce, neither of
+// which a file on disk can know. No etag on it for the same reason - the nonce changes
+// every request, so the hash would never match and the 304 would never happen.
 app.get("*", indexHandler);

@@ -1,6 +1,16 @@
 # Replace with your domain; Caddy then gets a certificate on its own.
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip
+
+	# The frontend build is content-hashed by Vite, so a file at one of these paths never
+	# changes - a new build is a new name. Bun already answers 304 for them; this is what
+	# stops the browser asking at all. nosniff is here rather than in the app because
+	# those paths are served by Bun's native routes, which do not run the app's
+	# middleware.
+	@immutable path /assets/* /fonts/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+	header @immutable X-Content-Type-Options "nosniff"
+
 	# WebSockets need no special config in Caddy 2 - reverse_proxy upgrades them.
 	reverse_proxy app:3000
 }

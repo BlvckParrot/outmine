@@ -2,7 +2,7 @@
 // and handleMessage, neither of which touches the network until a client asks to mine.
 import { expect, test } from "bun:test";
 import { config } from "./config";
-import { addClient, handleMessage, refKey, removeClient } from "./hub";
+import { addClient, handleMessage, nextCapacity, refKey, removeClient, shareInterval } from "./hub";
 
 /** Enough of a ServerWebSocket for the hub: it sends and it closes. */
 const socket = () => {
@@ -81,4 +81,50 @@ test("a page repeated on one socket is counted once", () => {
   // Two keys seen, whatever the order they were said in.
   expect(client.seen).toEqual(new Set(["page:/", "page:/stats"]));
   removeClient(client);
+});
+
+// --- how many miners share a pool socket ------------------------------------------------
+// The policy, without a pool: what the controller does with a window of evidence.
+
+test("a full socket that is slow for its miners takes fewer of them", () => {
+  const target = config.pool.targetShareSeconds;
+  // Sixteen miners and one accepted share in the window: everyone is waiting minutes.
+  expect(shareInterval(16, 1)).toBeGreaterThan(target);
+  expect(nextCapacity(16, 16, shareInterval(16, 1))).toBeLessThan(16);
+
+  // Nothing credited at all is the same answer, arrived at without dividing by zero.
+  expect(shareInterval(16, 0)).toBe(Infinity);
+  expect(nextCapacity(16, 16, Infinity)).toBeLessThan(16);
+});
+
+test("one slow miner on a socket with room does not shrink it", () => {
+  // A single browser that has found nothing for a window is a slow machine, not a
+  // crowded socket. Shrinking on that walked capacity down to the floor while fifteen
+  // slots sat empty, and the next arrivals then had to open a connection of their own.
+  expect(nextCapacity(16, 1, Infinity)).toBe(16);
+});
+
+test("a full socket with shares to spare takes more", () => {
+  const fast = config.pool.targetShareSeconds / 4;
+  // Started below the ceiling, whatever the ceiling is here: MINERS_PER_CONNECTION is
+  // read from the environment, and a test that hardcodes a number passes or fails on
+  // whoever's .env happens to be next to it.
+  const room = Math.max(1, config.pool.minersPerConnection - 8);
+  expect(nextCapacity(room, room, fast)).toBeGreaterThan(room);
+
+  // But only while it is full. Half-empty and fast is what half-empty looks like, and
+  // growing on that evidence would let one socket swallow the next crowd.
+  expect(nextCapacity(room, 1, fast)).toBe(room);
+});
+
+test("capacity stays between the floor and the configured ceiling", () => {
+  // Vardiff has a floor of its own: past a point, splitting miners across more sockets
+  // buys no shares and only spends connections, which is what gets an address banned.
+  let capacity = config.pool.minersPerConnection;
+  for (let i = 0; i < 100; i++) capacity = nextCapacity(capacity, capacity, Infinity);
+  expect(capacity).toBeGreaterThanOrEqual(Math.min(4, config.pool.minersPerConnection));
+
+  const ceiling = config.pool.minersPerConnection;
+  for (let i = 0; i < 100; i++) capacity = nextCapacity(capacity, capacity, 1);
+  expect(capacity).toBe(ceiling);
 });

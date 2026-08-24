@@ -63,7 +63,11 @@ export type ServerMessage =
    *  cannot leave a worker hashing the wrong function. */
   | { t: "job"; jobId: string; header: string; target: string; algo: MinerAlgo }
   | { t: "shareResult"; ok: boolean; error: string | null }
-  | { t: "error"; message: string };
+  // `retry` marks the errors that are about the moment rather than about the request:
+  // the pool is full or backing off, and the same message will work later. The client
+  // asks again on its own, because "try again shortly" with nothing that tries is a
+  // dead end a visitor cannot get out of.
+  | { t: "error"; message: string; retry?: boolean };
 
 export type ClientMessage =
   | { t: "mine"; listingId: string }

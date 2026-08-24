@@ -87,7 +87,10 @@ export const config = {
     user: str("POOL_USER"),
     password: str("POOL_PASS", "c=BTC"),
 
-    /** Miners sharing one pool socket.
+    /** Most miners one pool socket may hold.
+     *
+     *  An upper bound now, not the working number: how many actually share a socket is
+     *  decided at runtime from what the pool credits (see tuneConnections in hub.ts).
      *
      *  Not one socket per miner: a few hundred visitors would be a few hundred TCP
      *  connections from one IP and the pool would ban us. Not one socket for everyone
@@ -95,11 +98,24 @@ export const config = {
      *  single shared socket would cap the whole site at 5-15 shares a minute no matter
      *  how many people mine. Scoring would stay right on average, but a newcomer could
      *  mine five minutes and see zero, which kills the only feedback the game has. */
-    minersPerConnection: int("MINERS_PER_CONNECTION", 16, { min: 1, max: 256 }),
+    minersPerConnection: int("MINERS_PER_CONNECTION", 64, { min: 1, max: 256 }),
 
     /** Hard ceiling on sockets held against the pool. Past this, mining is refused
-     *  rather than risking a ban that would take the whole site's earnings with it. */
-    maxConnections: int("MAX_POOL_CONNECTIONS", 64, { min: 1, max: 4096 }),
+     *  rather than risking a ban that would take the whole site's earnings with it.
+     *  The controller keeps the count far below this in normal weather; it is the
+     *  brake, not the setting. */
+    maxConnections: int("MAX_POOL_CONNECTIONS", 128, { min: 1, max: 4096 }),
+
+    /** How often a browser should see an accepted share. The controller moves miners
+     *  per socket towards this: vardiff holds a socket to a few submits a minute
+     *  whatever its hashrate, so the wait a miner sees is set by how many share that
+     *  socket. Lower means more sockets, and more sockets is what gets an address
+     *  banned. */
+    targetShareSeconds: int("POOL_TARGET_SHARE_SECONDS", 90, { min: 5, max: 3600 }),
+
+    /** How long the site stops taking on new miners after the pool drops us or errors.
+     *  A controller that opens connections has to have a way to stop. */
+    backoffMs: int("POOL_BACKOFF_MS", 60_000, { min: 0, max: 3_600_000 }),
 
     /** Jobs kept per connection so a share that raced a job switch is dropped locally
      *  rather than sent and rejected. */
@@ -130,8 +146,13 @@ export const config = {
     maxClients: int("MAX_CLIENTS", 2000, { min: 1, max: 100_000 }),
     /** Sockets one address may hold. Without it the ceiling above is a single global
      *  counter, so one host can take every slot and every later visitor is turned away
-     *  at the door - and each accepted socket also costs a board snapshot. */
-    maxClientsPerAddress: int("MAX_CLIENTS_PER_ADDRESS", 10, { min: 1, max: 10_000 }),
+     *  at the door - and each accepted socket also costs a board snapshot.
+     *
+     *  One address is not one visitor: a university, an office or a phone network is a
+     *  single address to us, which is why this is not the handful of tabs one person
+     *  opens. It is only meaningful at all when the address is the visitor's - see the
+     *  proxy note on clientAddress in security.ts. */
+    maxClientsPerAddress: int("MAX_CLIENTS_PER_ADDRESS", 25, { min: 1, max: 10_000 }),
     /** Largest WebSocket frame accepted. Our biggest message is a board snapshot going
      *  the other way; anything large arriving is either a bug or an attack. */
     maxWsPayloadBytes: int("MAX_WS_PAYLOAD_BYTES", 16 * 1024, { min: 512, max: 1 << 20 }),

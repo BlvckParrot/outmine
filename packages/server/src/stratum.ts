@@ -160,6 +160,10 @@ export class StratumClient {
 
   #onClose() {
     this.#socket = null;
+    // Our own close() also lands here. Reporting that as a disconnection is not just
+    // log noise: the hub treats one as the pool being unhappy and stops taking on new
+    // miners, so closing an idle socket would throttle the site for no reason.
+    if (this.#closed) return;
     this.events.onDisconnected?.();
     this.#scheduleReconnect();
   }

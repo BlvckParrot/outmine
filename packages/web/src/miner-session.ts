@@ -13,8 +13,22 @@ const EMPTY: BoardSnapshot = {
   online: 0, mining: 0, feed: [],
 };
 
-const RECONNECT_MS = 2_000;
+/** Reconnect delay, doubling up to the ceiling and reset by a connection that opens.
+ *
+ *  With a fixed delay every visitor comes back in the same second after a restart, and
+ *  each arrival costs the server a board snapshot - so the moment it has least to spare
+ *  is the moment it is asked for the most. The jitter is what actually spreads them;
+ *  the backoff is what stops a server that is down from being asked every two seconds
+ *  by everyone who was watching. */
+const RECONNECT_MIN_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
 const HASHRATE_REPORT_MS = 3_000;
+
+/** How long to wait before asking for a mining slot again, and how far apart to spread
+ *  those retries. Spread because everyone turned away was turned away at once, and a
+ *  crowd that all comes back in the same second is the same crowd. */
+const RETRY_MIN_MS = 5_000;
+const RETRY_SPREAD_MS = 10_000;
 
 /** Module scope rather than a ref, so it survives a reconnect and only resets on a real
  *  page load - which is exactly what "one visit" means. The referrer rides along with
@@ -72,11 +86,13 @@ export function useMiner(path: string): MinerSession {
 
   useEffect(() => {
     let closed = false;
+    let delay = RECONNECT_MIN_MS;
     const connect = () => {
       const socket = new WebSocket(wsUrl("/ws"));
       ws.current = socket;
       socket.onopen = () => {
         setStatus("connected");
+        delay = RECONNECT_MIN_MS;
         // Resume after a drop. The server forgets everything about a closed socket, so
         // without this the workers keep hashing into nothing: the UI still shows a
         // healthy hashrate while every share is discarded.
@@ -88,14 +104,30 @@ export function useMiner(path: string): MinerSession {
       };
       socket.onclose = () => {
         setStatus("reconnecting…");
-        if (!closed) setTimeout(connect, RECONNECT_MS);
+        if (closed) return;
+        // Full jitter: anywhere in [0, delay), not delay give or take a little. Half of
+        // a synchronised crowd still arrives together if the spread is narrow.
+        setTimeout(connect, Math.random() * delay);
+        delay = Math.min(delay * 2, RECONNECT_MAX_MS);
       };
       socket.onmessage = (e) => {
         const msg: ServerMessage = JSON.parse(e.data);
         if (msg.t === "board") setBoard(msg);
         if (msg.t === "job") miner.current?.setJob(msg);
         if (msg.t === "shareResult") (msg.ok ? setAccepted : setRejected)((n) => n + 1);
-        if (msg.t === "error") setStatus(msg.message);
+        if (msg.t === "error") {
+          setStatus(msg.message);
+          // "try again shortly" has to be something that actually tries. The pool side
+          // is full or backing off; the listing this browser asked for is still the one
+          // it wants, and the controller opens room within a window or two.
+          if (msg.retry && mineForRef.current) {
+            const listingId = mineForRef.current;
+            setTimeout(() => {
+              if (mineForRef.current !== listingId) return; // they moved on
+              ws.current?.send(JSON.stringify({ t: "mine", listingId }));
+            }, RETRY_MIN_MS + Math.random() * RETRY_SPREAD_MS);
+          }
+        }
       };
     };
     connect();

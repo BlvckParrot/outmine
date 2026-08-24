@@ -128,12 +128,26 @@ the mono - scores, hashrates, ranks - and everything else is the sans.
 
 ## Pool connections
 
-Miners share pool sockets, 16 to a socket. Neither extreme works: one socket per miner
-means a few hundred TCP connections from one IP and a ban, while a single shared socket
-runs into zpool's vardiff, which targets 5-15 submits per minute *per connection*. That
-would cap the whole site at 5-15 shares a minute however many people mine - scoring
-stays right on average, but a newcomer can mine five minutes and see zero, which is the
-only feedback the game has.
+Miners share pool sockets. Neither extreme works: one socket per miner means a few
+hundred TCP connections from one IP and a ban, while a single shared socket runs into
+zpool's vardiff, which targets 5-15 submits per minute *per connection*. That would cap
+the whole site at 5-15 shares a minute however many people mine - scoring stays right on
+average, but a newcomer can mine five minutes and see zero, which is the only feedback
+the game has.
+
+How many share one socket is not a constant, because vardiff decides it and vardiff is
+not ours. Each socket reports what the pool actually credited in the last 30 seconds;
+from that comes the wait one miner on it sees, and the socket's capacity moves four at a
+time towards `POOL_TARGET_SHARE_SECONDS`. A socket is only grown while it is full - a
+half-empty one looks fast *because* it is half empty - and never shrunk below four,
+since past that point splitting miners across more sockets buys no shares and only
+spends connections.
+
+If the pool drops us or errors, no new socket is opened for `POOL_BACKOFF_MS` and every
+capacity is halved. A controller that only ever opens connections is how one address
+earns a ban, and a ban takes every listing's earnings with it. `MAX_POOL_CONNECTIONS` is
+the hard stop behind that; a miner turned away is told to try again, and does, so the
+crowd drains in as capacity grows rather than needing a reload.
 
 Each miner on a socket gets its own extranonce2, so no two build the same header, and
 submit replies are routed back by stratum request id. Without that routing the credit
@@ -141,6 +155,31 @@ lands on whoever happens to be next on the socket, and the totals still look pla
 
 Connections reconnect on their own with exponential backoff. extranonce1 changes on
 reconnect, so every header is rebuilt rather than reused.
+
+## Capacity
+
+Measured with `scripts/load-test.ts`, which opens real WebSockets that say `mine`,
+report a hashrate and submit shares, against `scripts/stratum-stub.ts` - a pool that
+accepts everything. Five thousand miners pointed at zpool would be the flood the
+controller above exists to prevent, so the load test never touches it.
+
+On this machine, 5000 concurrent sockets: **none refused, ~65 MB RSS, broadcast loop
+late by 0-1 ms**, 20k shares through the hub in two minutes. Three thousand arriving in
+a single tick behaves the same. `/health` reports `lagMs`, which is that number - one
+thread runs the board, the sockets and the share cards, so it is the first thing to look
+at when the site feels slow.
+
+Two things make that possible and are easy to undo:
+
+- The board snapshot goes out with `server.publish`, so Bun encodes and compresses it
+  once for the whole topic rather than once per socket.
+- A joining socket is handed the last broadcast rather than a fresh snapshot. Building
+  one is three queries and a walk of every client; per connection, that made a restart
+  quadratic in the number of visitors watching.
+
+Past 5000 the next step is more processes (`reusePort`), which means deciding what
+`online`, the feed and the pool sockets mean when there is more than one of them. Not
+worth doing before the measurement above says one is full.
 
 ## Abuse guard
 
@@ -253,8 +292,15 @@ quietly becoming `NaN`. `.env.example` lists all of them with their defaults.
 Only `POOL_USER` is required. The rest have defaults that work, and the ones worth
 knowing about are the algorithm (`POOL_ALGO`, `POOL_HOST`, `POOL_PORT` — see below),
 the visibility threshold (`VISIBILITY_THRESHOLD`, 600 shares), the icon gate
-(`ICON_MIN_POINTS`, 2000 points), the pool grouping (`MINERS_PER_CONNECTION`,
-`MAX_POOL_CONNECTIONS`) and the origin policy below.
+(`ICON_MIN_POINTS`, 2000 points), the bounds the pool controller works inside
+(`MINERS_PER_CONNECTION`, `MAX_POOL_CONNECTIONS`, `POOL_TARGET_SHARE_SECONDS`), how many
+visitors are held at once (`MAX_CLIENTS`, `MAX_CLIENTS_PER_ADDRESS`) and the origin
+policy below.
+
+`TRUSTED_PROXIES` is not optional behind a proxy, and not only for the rate limiter:
+the per-address socket ceiling is keyed the same way, so with it unset every visitor
+arrives as the proxy's address and the site caps itself at `MAX_CLIENTS_PER_ADDRESS`
+people. The bundled compose file sets it to 1.
 
 `POOL_ALGO` decides which WASM module the browser downloads and how a nonce is
 submitted, and it has to agree with the host and port. Mining one algorithm at
@@ -300,7 +346,7 @@ packages/server/
   blockheader.ts     stratum job -> the 80 bytes the miner hashes
   listings.ts        target normalisation and every SQL statement in the project
   db.ts              the connection, the pragmas, the migrations, the liveness probe
-scripts/             backup, browser check, yield measurement, test setup
+scripts/             backup, browser check, load test, stratum stub, yield, test setup
 ```
 
 Bun workspaces. Still one deployed process and one SQLite file; three runtime
@@ -372,6 +418,13 @@ bun run check     # typecheck, then hash vectors, framing, header assembly, norm
 INTEGRATION=1 POOL_ALGO=rinhash bun test packages/server/src/hub.integration.test.ts
 
 BASE=http://localhost:5173 bun scripts/browser-check.ts  # consent, mine, shares land
+
+# How many visitors one process holds. The stub is a pool that accepts everything;
+# five thousand miners pointed at a real one is a flood from a single address.
+bun scripts/stratum-stub.ts &
+POOL_HOST=127.0.0.1 POOL_PORT=3399 TRUSTED_PROXIES=1 MAX_CLIENTS=6000 \
+  PORT=3400 DB_PATH=/tmp/load.sqlite bun packages/server/src/server.ts &
+CLIENTS=5000 BASE=http://localhost:3400 bun scripts/load-test.ts
 ```
 
 `routes.test.ts` drives the HTTP surface through `app.request()` — no socket, no

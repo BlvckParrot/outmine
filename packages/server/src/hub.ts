@@ -51,6 +51,12 @@ export type Client = {
 type PoolConnection = {
   stratum: StratumClient;
   miners: Set<Client>;
+  /** Miners this socket will take, moved by tuneConnections towards the share interval
+   *  a browser should see. Not the configured maximum - that is only the ceiling. */
+  capacity: number;
+  /** Shares the pool accepted on this socket since the last tune. The controller's only
+   *  input, because it is the only number the pool itself produced. */
+  acceptedInWindow: number;
   /** Extranonce2 slots not currently held by a miner. Bounded and reused, so two live
    *  miners can never share one - which an ever-growing counter cannot promise once
    *  the pool reports a small extranonce2 size. */
@@ -67,6 +73,10 @@ type PoolConnection = {
   idleTimer: ReturnType<typeof setTimeout> | null;
 };
 
+/** The topic every socket subscribes to. Bun encodes and compresses a published
+ *  message once for the whole topic; the loop it replaced did both per client. */
+export const BOARD_TOPIC = "board";
+
 const clients = new Set<Client>();
 /** Sockets held per address. One entry per address with a live socket, deleted when its
  *  last one closes, so this never outgrows the client set. */
@@ -75,6 +85,15 @@ const connections = new Set<PoolConnection>();
 /** Credited shares not yet written to SQLite, by listing id. */
 const unflushed = new Map<string, { shares: number; diffSum: number }>();
 const feed: { ts: number; text: string }[] = [];
+
+/** The last broadcast, and when it was built. Both the "has anything moved" check and
+ *  the snapshot a joining socket is handed. */
+let lastBoard = "";
+let lastBoardAt = 0;
+
+/** Set when the pool drops us or errors: until it passes, no new pool socket is opened
+ *  and no miner is admitted that would need one. */
+let openingFrozenUntil = 0;
 
 export const clientCount = () => clients.size;
 export const miningCount = () => [...clients].filter((c) => c.listingId).length;
@@ -105,8 +124,27 @@ export function addClient(ws: ServerWebSocket<SocketData>, address: string): Cli
   };
   perAddress.set(address, held + 1);
   clients.add(client);
-  send(client, { t: "board", ...boardSnapshot() });
+  sendBoard(client);
   return client;
+}
+
+/** The snapshot a socket opens with, from the last broadcast while that is still
+ *  current.
+ *
+ *  Building one is three queries and a walk of every client, and it used to happen per
+ *  connection - so a restart, which brings the whole site back within seconds, was
+ *  quadratic in the number of visitors at exactly the moment the server had least to
+ *  spare. */
+function sendBoard(client: Client) {
+  if (!lastBoard || Date.now() - lastBoardAt >= config.board.broadcastMs) {
+    lastBoard = JSON.stringify({ t: "board", ...boardSnapshot() });
+    lastBoardAt = Date.now();
+  }
+  try {
+    client.ws.send(lastBoard);
+  } catch {
+    /* socket already gone; the close handler cleans up */
+  }
 }
 
 export function removeClient(client: Client) {
@@ -259,12 +297,96 @@ function countView(client: Client, msg: { path?: unknown; ref?: unknown; first?:
   if (listing && listingExists(listing)) countOnce(client, "listing", listing);
 }
 
+// --- how many miners share a socket -------------------------------------------------
+//
+// Not a constant, because the right number is not knowable here. What a miner waits for
+// an accepted share is set by vardiff: the pool holds a *connection* to a few submits a
+// minute whatever hashrate is behind it, so the wait is roughly that interval times the
+// miners sharing the socket - and the constant that used to encode this was a guess at
+// what the pool would do.
+//
+// So it is measured instead. Every window, each socket reports what the pool actually
+// credited, and the number of miners the socket will take moves towards the target.
+
+const TUNE_MS = 30_000;
+const TUNE_STEP = 4;
+const STARTING_CAPACITY = 16;
+
+/** Below this a socket is not shrunk further. Vardiff has a floor: once the pool is
+ *  already at its lowest difficulty, splitting miners across more sockets does not make
+ *  shares arrive any faster - the hashrate is the same and so is the share rate - and
+ *  all it buys is more connections from one address, which is the thing that gets an
+ *  address banned. A miner waiting on a phone is not a socket that is too full. */
+const MIN_CAPACITY = 4;
+
+/** Seconds one miner on this socket waits for an accepted share, from what the pool
+ *  credited in the last window. Infinity when it credited nothing, which is the same
+ *  signal as "too slow", only louder. */
+export const shareInterval = (miners: number, accepted: number, windowMs = TUNE_MS) =>
+  accepted > 0 ? ((windowMs / 1000) * miners) / accepted : Infinity;
+
+/** Where the capacity of one socket goes next. Split out from the loop because it is
+ *  the whole policy, and a policy that cannot be tested without a pool is a policy
+ *  nobody checks. */
+export function nextCapacity(capacity: number, miners: number, seconds: number): number {
+  // Only a full socket is evidence about how full a socket should be. Half empty and
+  // slow is a phone, not a crowd - shrinking then would spill the next arrivals onto a
+  // new connection while this one still had room. Half empty and fast is fast *because*
+  // it is half empty, and growing on that would let one socket swallow the next crowd.
+  if (miners < capacity) return capacity;
+
+  const target = config.pool.targetShareSeconds;
+  if (seconds > target) return Math.max(MIN_CAPACITY, capacity - TUNE_STEP);
+  if (seconds < target / 2) return Math.min(config.pool.minersPerConnection, capacity + TUNE_STEP);
+  return capacity;
+}
+
+/** Moves each socket's capacity towards the target share interval, once per window. */
+function tuneConnections() {
+  const frozen = Date.now() < openingFrozenUntil;
+
+  for (const conn of connections) {
+    const miners = conn.miners.size;
+    const accepted = conn.acceptedInWindow;
+    conn.acceptedInWindow = 0;
+    // Frozen means the pool just complained and capacity has already been cut; measuring
+    // a window that straddles a disconnection would only argue with that.
+    if (miners === 0 || frozen) continue;
+
+    const seconds = shareInterval(miners, accepted);
+    const before = conn.capacity;
+    conn.capacity = nextCapacity(conn.capacity, miners, seconds);
+
+    // The one line that says what the controller is doing. Without it, a capacity that
+    // has walked down to the floor looks exactly like a pool that has gone quiet.
+    if (conn.capacity !== before) {
+      throttledLog("pool_capacity", {
+        from: before, to: conn.capacity, miners, accepted,
+        secondsPerShare: Number.isFinite(seconds) ? Math.round(seconds) : null,
+      });
+    }
+  }
+}
+
+/** The pool is unhappy: stop taking on new miners for a while and halve what each
+ *  socket will hold. A controller that only ever opens connections is how one address
+ *  earns a ban, and a ban takes every listing's earnings with it. */
+function poolTrouble(reason: string) {
+  openingFrozenUntil = Date.now() + config.pool.backoffMs;
+  for (const conn of connections) {
+    conn.capacity = Math.max(MIN_CAPACITY, Math.floor(conn.capacity / 2));
+  }
+  throttledLog("pool_backoff", { reason, seconds: Math.round(config.pool.backoffMs / 1000) });
+}
+
 // --- pool connections ---------------------------------------------------------
 
 function openConnection(): PoolConnection {
   const conn: PoolConnection = {
     stratum: null as unknown as StratumClient,
     miners: new Set(),
+    capacity: STARTING_CAPACITY,
+    acceptedInWindow: 0,
     freeSlots: Array.from({ length: config.pool.minersPerConnection }, (_, i) => i),
     extranonce1: "",
     extranonce2Size: 4,
@@ -303,15 +425,20 @@ function openConnection(): PoolConnection {
         if (!miner) return; // miner left before the pool answered
         if (ok) {
           miner.badSubmits = 0; // a run of failures is the signal; one stale share is not
+          conn.acceptedInWindow++;
           creditShare(miner, conn.difficulty);
         }
         send(miner, { t: "shareResult", ok, error: ok ? null : String(err) });
       },
-      onError: (err) => throttledLog("pool_error", { error: String(err) }),
+      onError: (err) => {
+        throttledLog("pool_error", { error: String(err) });
+        poolTrouble("error");
+      },
       onDisconnected: () => {
         conn.submits.clear(); // answers will never come; do not credit them later
         for (const miner of conn.miners) send(miner, { t: "error", message: "pool reconnecting" });
         log("pool_disconnected", { miners: conn.miners.size });
+        poolTrouble("disconnected");
       },
     },
   );
@@ -328,12 +455,19 @@ function openConnection(): PoolConnection {
 function joinConnection(client: Client): PoolConnection | null {
   let conn: PoolConnection | undefined;
   for (const candidate of connections) {
-    if (candidate.freeSlots.length > 0) {
+    // Capacity is the controller's number and freeSlots is the protocol's: extranonce2
+    // slots are what stops two miners on one socket hashing the same nonces, and there
+    // is no share of the work to hand out once they run out.
+    if (candidate.miners.size < candidate.capacity && candidate.freeSlots.length > 0) {
       conn = candidate;
       break;
     }
   }
   if (!conn) {
+    if (Date.now() < openingFrozenUntil) {
+      throttledLog("pool_opening_frozen", { connections: connections.size });
+      return null;
+    }
     if (connections.size >= config.pool.maxConnections) {
       throttledLog("pool_connection_ceiling", { connections: connections.size });
       return null;
@@ -419,7 +553,9 @@ function startMining(client: Client, listingId: string) {
 
   stopMining(client);
   const conn = joinConnection(client);
-  if (!conn) return send(client, { t: "error", message: "mining is at capacity, try again shortly" });
+  if (!conn) {
+    return send(client, { t: "error", message: "mining is at capacity, try again shortly", retry: true });
+  }
 
   // Once per socket, so switching listings is not a second conversion.
   if (!client.mined) {
@@ -551,21 +687,32 @@ export function flush() {
   }
 }
 
-let lastBoard = "";
+/** How late the broadcast loop ran, in milliseconds. The one number that says whether
+ *  the process is keeping up: everything here shares a single thread, so a card being
+ *  rasterised or a snapshot being built shows up as this interval slipping. Reported by
+ *  /health, where the load test and a monitor can both read it. */
+export const loopLag = () => lag;
+let lag = 0;
+let lastTick = 0;
 
-export function startLoops() {
+export function startLoops(server: Bun.Server<SocketData>) {
   setInterval(flush, config.board.flushMs);
+  setInterval(tuneConnections, TUNE_MS);
   setInterval(() => {
+    const tick = Date.now();
+    if (lastTick) lag = Math.max(0, tick - lastTick - config.board.broadcastMs);
+    lastTick = tick;
+
     if (clients.size === 0) return;
     const json = JSON.stringify({ t: "board", ...boardSnapshot() });
+    // Stamped even when nothing moved: the snapshot is still current, and a socket
+    // joining in the next couple of seconds can be handed it as it is.
+    lastBoardAt = Date.now();
     if (json === lastBoard) return; // nothing moved; skip the broadcast
     lastBoard = json;
-    for (const client of clients) {
-      try {
-        client.ws.send(json);
-      } catch {
-        /* closing */
-      }
-    }
+    // One encode and one compression for the whole topic, in native code. The loop this
+    // replaced did both per socket, which at a few thousand of them is the broadcast
+    // interval spent inside the broadcast.
+    server.publish(BOARD_TOPIC, json, true);
   }, config.board.broadcastMs);
 }
