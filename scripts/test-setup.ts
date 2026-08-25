@@ -18,3 +18,13 @@ const path = join(tmpdir(), `outmine-test-${process.pid}.sqlite`);
 for (const suffix of ["", "-shm", "-wal"]) rmSync(path + suffix, { force: true });
 
 process.env.DB_PATH = path;
+
+// The two tests that drive /l/:id and /index.html need an index.html to template, and
+// packages/web/dist only exists after a build - so on a clean checkout the route
+// answered 503 and the assertions ran against that text instead. One of them still
+// passed, because it only checks for strings that a 503 body also lacks.
+//
+// Pointed at the source file rather than the build output: it is the same template,
+// markers and all, and it is in the repository, so the test means the same thing in
+// CI as it does after a local build.
+process.env.WEB_DIST ||= new URL("../packages/web", import.meta.url).pathname;
