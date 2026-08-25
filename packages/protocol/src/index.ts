@@ -51,6 +51,12 @@ export type BoardSnapshot = {
    *  same reason as `threshold`: the gate is the server's to set, and the owner has
    *  to be told what they are mining towards. */
   iconMinPoints: number;
+  /** What the server will keep of a name and a tagline. Sent for the same reason as the
+   *  two gates above: the limit is the server's to set, and it enforces it by
+   *  truncating rather than refusing - so a form that does not know it accepts a
+   *  three-hundred-character tagline, answers 201, and silently stores a third of it. */
+  maxNameLength: number;
+  maxTaglineLength: number;
   online: number;
   mining: number;
   feed: FeedItem[];

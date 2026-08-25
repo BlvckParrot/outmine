@@ -6,7 +6,7 @@ import { SubmitForm } from "./SubmitForm";
 /** The top of the board as a price, which is what outbid.lol puts here and the only
  *  number that says what it costs to win. Ours is in points rather than dollars. */
 export function Hero() {
-  const { board } = useSession();
+  const { board, online } = useSession();
   const top = board.entries[0];
   const hashrate = board.entries.reduce((sum, e) => sum + e.hashrate, 0);
 
@@ -18,14 +18,23 @@ export function Hero() {
         {...linkProps("/stats")}
         className="inline-block max-w-full rounded-full bg-muted px-3 py-1.5 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
+        {/* The counts come from the last snapshot, which survives the socket that
+            delivered it - so when the connection is down they are a confident lie. The
+            dot stops pinging and the numbers give way to the reason instead. */}
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
           <span className="relative inline-flex size-2 shrink-0">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-live opacity-75 motion-reduce:animate-none" />
-            <span className="relative inline-flex size-2 rounded-full bg-live" />
+            {online && (
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-live opacity-75 motion-reduce:animate-none" />
+            )}
+            <span className={`relative inline-flex size-2 rounded-full ${online ? "bg-live" : "bg-muted-foreground"}`} />
           </span>
-          <span className="font-semibold text-live">{board.online} online</span>
+          {online ? (
+            <span className="font-semibold text-live">{board.online} online</span>
+          ) : (
+            <span className="font-semibold">offline — reconnecting</span>
+          )}
         </span>
-        <span> · {board.mining} mining · {fmt(hashrate)} H/s</span>
+        {online && <span> · {board.mining} mining · {fmt(hashrate)} H/s</span>}
         <span className="text-foreground"> · see stats→</span>
       </a>
 

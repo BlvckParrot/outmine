@@ -34,6 +34,20 @@ const MAX_BUFFER_BYTES = 256 * 1024;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 
+/** Longest silence tolerated from a socket that is nominally connected.
+ *
+ *  A pool that completes the TCP handshake and then says nothing keeps `connected`
+ *  true, keeps poolHealthy() green on /health, and keeps every miner on it parked with
+ *  no work - the one failure with no symptom at all. zpool sends a mining.notify well
+ *  inside this, so silence this long means the connection is over whatever the socket
+ *  thinks. */
+const SILENCE_MS = 180_000;
+
+/** Stratum extranonce2 is a couple of bytes. The value is pool-controlled and becomes a
+ *  padStart width per miner per job, so it is clamped rather than trusted. */
+const EXTRANONCE2_SIZE_MAX = 8;
+const EXTRANONCE2_SIZE_DEFAULT = 4;
+
 export class StratumClient {
   #socket: Socket<unknown> | null = null;
   #buffer = "";
@@ -42,6 +56,8 @@ export class StratumClient {
   #closed = false;
   #reconnectDelay = RECONNECT_BASE_MS;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  #silenceTimer: ReturnType<typeof setInterval> | null = null;
+  #lastByteAt = 0;
 
   constructor(
     private host: string,
@@ -53,6 +69,12 @@ export class StratumClient {
 
   get connected() {
     return this.#socket !== null;
+  }
+
+  /** The current reconnect delay. Exposed so the backoff ladder can be tested without
+   *  waiting for it - see stratum.test.ts. */
+  get backoffMs() {
+    return this.#reconnectDelay;
   }
 
   async connect(): Promise<void> {
@@ -74,9 +96,27 @@ export class StratumClient {
     }
     this.#buffer = "";
     this.#pending.clear();
-    this.#reconnectDelay = RECONNECT_BASE_MS;
+    // The backoff is NOT reset here. A pool that accepts the connection and then drops
+    // it - which is the shape of an IP ban and of a rejected login - would reset the
+    // ladder on every cycle, so 1s never became 60s and the reconnects themselves
+    // became the flood. It is reset when the pool authorizes us; see handleMessage.
+    this.#lastByteAt = Date.now();
+    this.#startWatchdog();
     this.subscribe();
     this.authorize();
+  }
+
+  /** Notices a connection that has stopped being one without closing. Checked rather
+   *  than scheduled per byte: one interval per socket, and it unrefs so it cannot hold
+   *  the process open at exit. */
+  #startWatchdog() {
+    if (this.#silenceTimer) return;
+    this.#silenceTimer = setInterval(() => {
+      if (!this.#socket || Date.now() - this.#lastByteAt < SILENCE_MS) return;
+      this.events.onError?.(new Error(`pool silent for ${Math.round(SILENCE_MS / 1000)}s`));
+      this.#socket.end(); // close() -> #onClose -> reconnect with the usual backoff
+    }, Math.floor(SILENCE_MS / 3));
+    this.#silenceTimer.unref?.();
   }
 
   subscribe(): number {
@@ -96,6 +136,8 @@ export class StratumClient {
   close() {
     this.#closed = true;
     if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
+    if (this.#silenceTimer) clearInterval(this.#silenceTimer);
+    this.#silenceTimer = null;
     this.#socket?.end();
     this.#socket = null;
   }
@@ -103,6 +145,7 @@ export class StratumClient {
   /** Entry point for bytes off the wire. Public so the framing can be tested without
    *  a socket, which is where this code actually goes wrong. */
   feed(chunk: string | Uint8Array) {
+    this.#lastByteAt = Date.now();
     this.#buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
     // A line this long is not a stratum message. Kept bounded rather than parsed: the
     // pool is trusted to be the pool, not trusted to stay well-behaved forever.
@@ -130,7 +173,15 @@ export class StratumClient {
       return;
     }
     if (msg.method === "mining.set_difficulty") {
-      this.events.onDifficulty?.(msg.params[0]);
+      const difficulty = Number(msg.params?.[0]);
+      // The pool chooses this and it is multiplied into every score. A null, a string
+      // or a zero would reach `score REAL` as NaN, and score + NaN is NaN for good -
+      // which takes ORDER BY score DESC, the totals and the rank on the card with it.
+      if (!Number.isFinite(difficulty) || difficulty <= 0) {
+        this.events.onError?.(new Error(`unusable difficulty ${JSON.stringify(msg.params?.[0])}`));
+        return;
+      }
+      this.events.onDifficulty?.(difficulty);
       return;
     }
     if (msg.id == null) return;
@@ -139,7 +190,20 @@ export class StratumClient {
     this.#pending.delete(msg.id);
 
     if (method === "mining.subscribe" && Array.isArray(msg.result)) {
-      this.events.onSubscribed?.(msg.result[1], msg.result[2]);
+      const size = Number(msg.result[2]);
+      const clamped =
+        Number.isInteger(size) && size >= 1 && size <= EXTRANONCE2_SIZE_MAX
+          ? size
+          : EXTRANONCE2_SIZE_DEFAULT;
+      this.events.onSubscribed?.(String(msg.result[1] ?? ""), clamped);
+      return;
+    }
+    if (method === "mining.authorize") {
+      // The only place the backoff is cleared: this is the first message that proves
+      // the pool is willing to work with us, rather than merely willing to accept a TCP
+      // connection and hang up.
+      if (msg.result === true) this.#reconnectDelay = RECONNECT_BASE_MS;
+      else this.events.onError?.(msg.error ?? new Error("pool refused the login"));
       return;
     }
     if (method === "mining.submit") {

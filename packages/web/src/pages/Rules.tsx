@@ -10,6 +10,11 @@ export function Rules() {
         <li>It will warm your machine and drain a battery. Throttle it or stop it at any time.</li>
         <li>Closing the tab ends it. There is no background worker and no service worker.</li>
         <li>
+          A tab left open in the background keeps mining, but browsers throttle background
+          timers heavily, so it slows to a trickle rather than stopping. If you want it to
+          stop, press stop.
+        </li>
+        <li>
           If a stored consent from an earlier visit is remembered, it saves you the banner, not the
           click. Mining still needs a fresh press of the button.
         </li>
@@ -26,7 +31,11 @@ export function Rules() {
           Link shorteners are refused. The board links to the real destination, and a shortener
           hides both the destination and its own tracking.
         </li>
-        <li>No adult content, malware, or anything unlawful where this server runs.</li>
+        <li>
+          No adult content, malware, or anything unlawful where this server runs. A short
+          word list refuses the obvious cases outright; everything else is removed by the
+          operator after the fact.
+        </li>
       </ul>
 
       <h2>How rank is decided</h2>

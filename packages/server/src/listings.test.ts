@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { ICON_MAX_PX } from "@outmine/protocol";
 import { config } from "./config";
-import { checkedIcon, likePattern, normalizeTarget } from "./listings";
+import {
+  checkedIcon, createListing, creditShares, deleteListing, getListing, likePattern,
+  normalizeTarget,
+} from "./listings";
 
 test.each([
   // input                                    -> canonical
@@ -109,4 +112,32 @@ test("a file past the byte ceiling is refused before its header is trusted", () 
   const huge = new Uint8Array(config.limits.maxIconBytes + 1);
   huge.set(PNG_1X1);
   expect(() => checkedIcon(huge)).toThrow();
+});
+
+// --- the foreign key that makes a takedown dangerous ----------------------------------
+
+test("a share batch naming a deleted listing takes every other listing down with it", () => {
+  const alive = createListing({ kind: "domain", target: "alive-fk.example.com", name: "Alive" }).listing;
+  const doomed = createListing({ kind: "domain", target: "doomed-fk.example.com", name: "Doomed" }).listing;
+  deleteListing(doomed.id);
+
+  // share_buckets.listing_id REFERENCES listings(id) with foreign_keys ON, and
+  // creditShares runs the whole batch in one transaction.
+  expect(() =>
+    creditShares([
+      [alive.id, { shares: 5, diffSum: 5 }],
+      [doomed.id, { shares: 5, diffSum: 5 }],
+    ]),
+  ).toThrow();
+
+  // The rollback is the whole point: the healthy listing was credited nothing, and the
+  // hub keeps its counters and retries the same poisoned batch forever. hub.dropListing
+  // is what stops a deleted id from reaching this list - see the DELETE route.
+  expect(getListing(alive.id)!.shares).toBe(0);
+});
+
+test("the same batch without the deleted listing credits normally", () => {
+  const alive = createListing({ kind: "domain", target: "alive-ok.example.com", name: "Fine" }).listing;
+  creditShares([[alive.id, { shares: 5, diffSum: 5 }]]);
+  expect(getListing(alive.id)!.shares).toBe(5);
 });

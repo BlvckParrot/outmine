@@ -43,9 +43,17 @@ function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: 
   return raw as T;
 }
 
-function list(name: string): string[] {
-  return (process.env[name] ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+function list(name: string, fallback: readonly string[] = []): string[] {
+  const values = (process.env[name] ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+  return values.length > 0 ? values : [...fallback];
 }
+
+/** The category /rules names first. A setting rather than a list baked into the source:
+ *  what belongs on a public board is the operator's policy and moves without a deploy,
+ *  and BLOCKED_WORDS replaces this entirely rather than adding to it. */
+const DEFAULT_BLOCKED_WORDS = [
+  "porn", "porno", "pornhub", "xxx", "nsfw", "hentai", "camgirl", "escort", "onlyfans",
+] as const;
 
 /** The repo root, derived from this file rather than the working directory: `bun
  *  --filter` runs the server from packages/server, and a relative path would otherwise
@@ -142,8 +150,14 @@ export const config = {
   },
 
   limits: {
-    /** Total simultaneous visitors holding a socket, mining or just watching. */
-    maxClients: int("MAX_CLIENTS", 2000, { min: 1, max: 100_000 }),
+    /** Total simultaneous visitors holding a socket, mining or just watching.
+     *
+     *  Five thousand is measured rather than guessed: that many real sockets cost this
+     *  server about 65 MB and left the broadcast loop running on time
+     *  (scripts/load-test.ts). The default used to be 2000 while .env.example and its
+     *  comment said 5000, so anyone who trusted the documentation and omitted the
+     *  variable got 40% of the capacity it promised. */
+    maxClients: int("MAX_CLIENTS", 5000, { min: 1, max: 100_000 }),
     /** Sockets one address may hold. Without it the ceiling above is a single global
      *  counter, so one host can take every slot and every later visitor is turned away
      *  at the door - and each accepted socket also costs a board snapshot.
@@ -212,6 +226,16 @@ export const config = {
 
     /** Enables DELETE /api/listings/:id. Empty disables takedowns entirely. */
     adminToken: process.env.ADMIN_TOKEN?.trim() ?? "",
+
+    /** Words refused in a listing's name or tagline, comma separated. Set it to
+     *  replace the default list; there is no way to disable the check short of
+     *  BLOCKED_WORDS=" ", which is deliberate.
+     *
+     *  A name reaches the public board, the share card a crawler renders, and the
+     *  <title> of a page people post to X. The admin takedown route is the real remedy
+     *  and this is not a substitute for it - see blockedWord in security.ts for what
+     *  the match does and does not catch. */
+    blockedWords: list("BLOCKED_WORDS", DEFAULT_BLOCKED_WORDS),
 
     /** Proxies in front of this server, counted from the outside in. X-Forwarded-For
      *  is appended to by each hop, so with one proxy the client address is the last

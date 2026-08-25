@@ -2,14 +2,28 @@
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip
 
+	# Access log. Caddy 2 keeps per-site logging off unless a site block asks for it, so
+	# without this there is no record of what reached the edge - no 4xx or 5xx rate, and
+	# nothing to line up against a ws_origin_rejected or a rate-limit refusal in the app.
+	log {
+		output stdout
+		format json
+	}
+
+	# Everything Bun answers from its native routes - see staticRoutes in server.ts -
+	# skips Hono, and therefore skips the app's secureHeaders. That is every file at the
+	# root of dist as well as the two directories: the WASM miner, its glue, the favicon
+	# and robots.txt. nosniff has to come from here for all of them, and it matters most
+	# for the one the CSP's script-src 'self' would otherwise be asked to vouch for.
+	@static path /assets/* /fonts/* /mine-* /favicon.svg /robots.txt
+	header @static X-Content-Type-Options "nosniff"
+
 	# The frontend build is content-hashed by Vite, so a file at one of these paths never
 	# changes - a new build is a new name. Bun already answers 304 for them; this is what
-	# stops the browser asking at all. nosniff is here rather than in the app because
-	# those paths are served by Bun's native routes, which do not run the app's
-	# middleware.
+	# stops the browser asking at all. The WASM is deliberately not here: its name does
+	# not change between builds, so an immutable year would outlive the file.
 	@immutable path /assets/* /fonts/*
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
-	header @immutable X-Content-Type-Options "nosniff"
 
 	# WebSockets need no special config in Caddy 2 - reverse_proxy upgrades them.
 	reverse_proxy app:3000

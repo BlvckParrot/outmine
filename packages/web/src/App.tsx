@@ -59,7 +59,7 @@ export default function App() {
     miner.start(listingId);
   };
 
-  const { board, mineFor } = miner;
+  const { board, mineFor, online } = miner;
   const all = [...board.entries, ...board.pending];
   const mining = all.find((e) => e.id === mineFor);
   // Only offer to resume for a listing that is still there. A takedown, or a target
@@ -67,7 +67,7 @@ export default function App() {
   const resume = !mineFor ? all.find((e) => e.id === resumable) : undefined;
 
   return (
-    <SessionContext.Provider value={{ board, consented, accept, mineFor, startMining: start, claim }}>
+    <SessionContext.Provider value={{ board, online, consented, accept, mineFor, startMining: start, claim }}>
       <div className="flex min-h-screen flex-col font-sans">
         <Header path={path} />
 
@@ -93,6 +93,7 @@ export default function App() {
             {consented && mineFor && (
               <MiningPanel
                 name={mining?.name ?? mineFor}
+                status={miner.status}
                 hashrate={miner.hashrate}
                 accepted={miner.accepted}
                 rejected={miner.rejected}

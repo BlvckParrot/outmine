@@ -2,7 +2,9 @@
 // and handleMessage, neither of which touches the network until a client asks to mine.
 import { expect, test } from "bun:test";
 import { config } from "./config";
-import { addClient, handleMessage, nextCapacity, refKey, removeClient, shareInterval } from "./hub";
+import {
+  addClient, dropListing, handleMessage, nextCapacity, refKey, removeClient, shareInterval,
+} from "./hub";
 
 /** Enough of a ServerWebSocket for the hub: it sends and it closes. */
 const socket = () => {
@@ -127,4 +129,33 @@ test("capacity stays between the floor and the configured ceiling", () => {
   const ceiling = config.pool.minersPerConnection;
   for (let i = 0; i < 100; i++) capacity = nextCapacity(capacity, capacity, 1);
   expect(capacity).toBe(ceiling);
+});
+
+// --- takedown ---------------------------------------------------------------------------
+
+test("a takedown detaches the miners on that listing and leaves the rest alone", () => {
+  // listingId is set directly rather than through `mine`: startMining only assigns it
+  // after joinConnection has opened a real pool socket, and what is under test here is
+  // what dropListing does with the clients it finds, not how they got there.
+  const removed = socket();
+  const onRemoved = addClient(removed, address())!;
+  onRemoved.listingId = "gone000000aa";
+
+  const other = socket();
+  const onOther = addClient(other, address())!;
+  onOther.listingId = "stays00000bb";
+
+  dropListing("gone000000aa");
+
+  // Without this the miner keeps crediting into unflushed, and the next flush tries to
+  // write a share_bucket for a listing that no longer exists - which fails the foreign
+  // key and rolls back every other listing's shares with it. See listings.test.ts.
+  expect(onRemoved.listingId).toBeNull();
+  expect(errors(removed)).toContain("this listing has been removed");
+
+  expect(onOther.listingId).toBe("stays00000bb");
+  expect(errors(other)).toEqual([]);
+
+  removeClient(onRemoved);
+  removeClient(onOther);
 });

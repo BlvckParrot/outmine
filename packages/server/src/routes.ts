@@ -14,7 +14,9 @@ import type {
 } from "@outmine/protocol";
 import { config } from "./config";
 import { dbAlive, type Listing } from "./db";
-import { clientCount, connectionCount, loopLag, miningCount, poolHealthy, pushFeed } from "./hub";
+import {
+  clientCount, connectionCount, dropListing, loopLag, miningCount, poolHealthy, pushFeed,
+} from "./hub";
 import {
   boardTotals, countClick, createListing, deleteListing, getIcon, getListing, listingRank,
   searchBoard, setIcon, TargetError, trafficByDay, trafficListings, trafficTop, trending,
@@ -154,6 +156,41 @@ app.get("/health", (c) => {
   });
 });
 
+// --- rate limits ---------------------------------------------------------------------
+
+/** What every limiter keys on, and it is not the library's default: that reads
+ *  X-Forwarded-For from the left, which is the end a client writes, so anyone could
+ *  reset their own limit with one forged header. clientAddress counts from the right,
+ *  by TRUSTED_PROXIES. Security control, not configuration - see security.ts. */
+const byAddress = (c: Context<{ Bindings: RequestContext }>) =>
+  clientAddress(c.req.raw.headers, c.env?.socketAddress);
+
+/** Per-address sliding window. Without it a bot floods the pending list, which is
+ *  public and ordered, so a flood pushes the real entries off the end.
+ *
+ *  Registered ahead of the body middleware: there is no reason to buffer a body that
+ *  is about to be refused. */
+const newListingLimit = rateLimiter<{ Bindings: RequestContext }>({
+  windowMs: 60_000,
+  limit: config.limits.newListingsPerMinute,
+  keyGenerator: byAddress,
+  handler: (c) => c.json({ error: "slow down" }, 429),
+});
+
+/** Everything that is not free to answer: rasterising a share card, the outbound hop
+ *  (an UPDATE per request), the board search - four queries, two of them a leading-%
+ *  LIKE across two columns that no index can serve - and the owner writes.
+ *
+ *  Deliberately not on /icon/*: a board page is fifty rows and fifty icon requests, so
+ *  a per-minute ceiling there would refuse the page it was drawn for. Those are bounded
+ *  by MAX_ICON_BYTES and answered with an ETag instead. */
+const readLimit = rateLimiter<{ Bindings: RequestContext }>({
+  windowMs: 60_000,
+  limit: config.limits.expensiveReadsPerMinute,
+  keyGenerator: byAddress,
+  handler: (c) => c.json({ error: "slow down" }, 429),
+});
+
 // --- the board ---------------------------------------------------------------------
 
 /** The board over HTTP: first paint, clients without a WebSocket, and every filtered
@@ -162,7 +199,7 @@ app.get("/health", (c) => {
  *
  *  With no parameters the answer is what the socket would have sent, which keeps first
  *  paint and pre-existing clients unchanged. */
-app.get("/api/board", (c) => {
+app.get("/api/board", readLimit, (c) => {
   const params = new URL(c.req.url).searchParams;
   const window = params.get("window") === "24h" ? "24h" : "all";
   // Both bounded. `q` runs a leading-% LIKE over two columns, which no index can
@@ -212,34 +249,6 @@ app.get("/api/stats", (c) => {
 
 // --- listings ----------------------------------------------------------------------
 
-/** What every limiter keys on, and it is not the library's default: that reads
- *  X-Forwarded-For from the left, which is the end a client writes, so anyone could
- *  reset their own limit with one forged header. clientAddress counts from the right,
- *  by TRUSTED_PROXIES. Security control, not configuration - see security.ts. */
-const byAddress = (c: Context<{ Bindings: RequestContext }>) =>
-  clientAddress(c.req.raw.headers, c.env?.socketAddress);
-
-/** Per-address sliding window. Without it a bot floods the pending list, which is
- *  public and ordered, so a flood pushes the real entries off the end.
- *
- *  Registered ahead of the body middleware: there is no reason to buffer a body that
- *  is about to be refused. */
-const newListingLimit = rateLimiter<{ Bindings: RequestContext }>({
-  windowMs: 60_000,
-  limit: config.limits.newListingsPerMinute,
-  keyGenerator: byAddress,
-  handler: (c) => c.json({ error: "slow down" }, 429),
-});
-
-/** The reads that are not free: rasterising a share card, and the outbound hop, which
- *  is an unmetered UPDATE per request otherwise. */
-const readLimit = rateLimiter<{ Bindings: RequestContext }>({
-  windowMs: 60_000,
-  limit: config.limits.expensiveReadsPerMinute,
-  keyGenerator: byAddress,
-  handler: (c) => c.json({ error: "slow down" }, 429),
-});
-
 app.post("/api/listings", newListingLimit, boundedBody(config.limits.maxBodyBytes), newListingBody, (c) => {
   try {
     const { listing, editToken } = createListing(c.req.valid("json"));
@@ -253,7 +262,7 @@ app.post("/api/listings", newListingLimit, boundedBody(config.limits.maxBodyByte
   }
 });
 
-app.patch("/api/listings/:id", boundedBody(config.limits.maxBodyBytes), editListingBody, (c) => {
+app.patch("/api/listings/:id", readLimit, boundedBody(config.limits.maxBodyBytes), editListingBody, (c) => {
   const token = c.req.header("x-edit-token");
   if (!token) return c.json({ error: "missing edit token" }, 401);
 
@@ -272,7 +281,7 @@ app.patch("/api/listings/:id", boundedBody(config.limits.maxBodyBytes), editList
  *  Both gates are here for different reasons. The token says whose listing it is; the
  *  points say the row has earned the loudest thing on it, which is also what keeps an
  *  upload form off a listing that anyone can create with one POST. */
-app.put("/api/listings/:id/icon", boundedBody(config.limits.maxIconBytes), async (c) => {
+app.put("/api/listings/:id/icon", readLimit, boundedBody(config.limits.maxIconBytes), async (c) => {
   const token = c.req.header("x-edit-token");
   if (!token) return c.json({ error: "missing edit token" }, 401);
 
@@ -289,7 +298,7 @@ app.put("/api/listings/:id/icon", boundedBody(config.limits.maxIconBytes), async
 
 /** Takedown. The board is public and the reference site bans adult content; without
  *  this the only remedy is editing SQLite by hand. */
-app.delete("/api/listings/:id", (c) => {
+app.delete("/api/listings/:id", readLimit, (c) => {
   const offered = c.req.header("x-admin-token") ?? "";
   if (!config.security.adminToken || !secretsMatch(config.security.adminToken, offered)) {
     return c.json({ error: "unauthorized" }, 401);
@@ -299,6 +308,10 @@ app.delete("/api/listings/:id", (c) => {
   const listing = getListing(id);
   if (!listing) return c.json({ error: "not found" }, 404);
 
+  // Before the row goes: the hub is still holding miners on this listing and their
+  // unflushed counters, and a share_bucket INSERT for a listing that no longer exists
+  // fails the foreign key and rolls back the whole flush batch. See dropListing.
+  dropListing(id);
   deleteListing(id);
   log("listing_removed", { id, target: listing.target });
   return c.json({ removed: id });
@@ -353,7 +366,7 @@ app.get("/r/:id", readLimit, (c) => {
  *
  *  Not public, unlike everything on /stats. Referrer hosts are somebody else's traffic,
  *  and a public list of them is an invitation to spam it. */
-app.get("/admin/traffic", (c) => {
+app.get("/admin/traffic", readLimit, (c) => {
   const offered = new URL(c.req.url).searchParams.get("token") ?? "";
   if (!config.security.adminToken || !secretsMatch(config.security.adminToken, offered)) {
     return c.json({ error: "unauthorized" }, 401);

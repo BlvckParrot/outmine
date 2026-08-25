@@ -5,7 +5,9 @@ import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const SOURCE = process.env.DB_PATH ?? "data/outmine.sqlite";
-const OUT_DIR = process.argv[2] ?? "data/backups";
+// Beside the database, not inside it. `data/backups` meant every snapshot shared one
+// directory with the file it was a snapshot of, so `rm -rf data` took all fifteen.
+const OUT_DIR = process.argv[2] ?? "backups";
 // `|| 14`, not a bare Number(): BACKUP_KEEP=abc is NaN, and slice(NaN) is slice(0),
 // which would delete every backup this script just listed.
 const KEEP = Number(process.env.BACKUP_KEEP ?? 14) || 14;

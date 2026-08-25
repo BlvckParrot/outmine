@@ -1,7 +1,17 @@
+# Both services log one JSON line per event to stdout, and Docker's default json-file
+# driver has no size limit. On a single host that log grows into the same disk as the
+# ./data bind mount below, so left unbounded it takes the database down with it.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   app:
     build: .
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     security_opt:
       - no-new-privileges:true
@@ -17,11 +27,14 @@ services:
       # drop the preview. Derived from SITE_ADDRESS unless set explicitly.
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${SITE_ADDRESS}}
     volumes:
-      # The app runs as the image's `bun` user (uid 1000), so this directory has to be
-      # writable by it on the host: `sudo chown -R 1000:1000 ./data` once, before the
-      # first start. Left root-owned, the container starts and then cannot open the
-      # database.
+      # The app runs as the image's `bun` user (uid 1000), so these directories have to
+      # be writable by it on the host: `sudo chown -R 1000:1000 ./data ./backups` once,
+      # before the first start. Left root-owned, the container starts and then cannot
+      # open the database.
       - ./data:/app/data
+      # Separate from ./data on purpose. Point this at another disk - or rsync it off
+      # the host - and the backups survive something the database does not.
+      - ./backups:/app/backups
     expose:
       - "3000"
     healthcheck:
@@ -32,8 +45,12 @@ services:
       start_period: 10s
 
   caddy:
+    # Floating tag. The wasm stage pins three git SHAs and a file digest for the miner;
+    # pin this and oven/bun:1 by digest to match - `docker image inspect caddy:2
+    # --format '{{index .RepoDigests 0}}'` after a pull gives the line to paste.
     image: caddy:2
     restart: unless-stopped
+    logging: *logging
     # Caddy reads SITE_ADDRESS from the Caddyfile. Without it Caddy silently falls back
     # to localhost and never gets a certificate for the real domain.
     #

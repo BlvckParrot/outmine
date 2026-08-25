@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, ImageUp, KeyRound, Lock, Pencil } from "lucide-react";
 import { compact, ICON_MAX_PX, POINT_SCALE, type ListingDetail } from "@outmine/protocol";
-import { apiUrl, usePolled } from "../api";
+import { apiUrl, request, usePolled } from "../api";
 import { points } from "../format";
 import { linkProps } from "../router";
 import { useSession } from "../session";
@@ -147,20 +147,24 @@ function EditForm(props: {
   onSaved: (next: { name: string; tagline: string }) => void;
   onCancel: () => void;
 }) {
+  const { board } = useSession();
   const [name, setName] = useState(props.name);
   const [tagline, setTagline] = useState(props.tagline);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch(apiUrl(`/api/listings/${props.id}`), {
+    if (saving) return;
+    setSaving(true);
+    const res = await request<{ name: string; tagline: string }>(`/api/listings/${props.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json", "x-edit-token": props.token },
       body: JSON.stringify({ name, tagline }),
     });
-    const data = await res.json();
-    if (!res.ok) return setError(data.error ?? "could not save");
-    props.onSaved({ name: data.name, tagline: data.tagline });
+    setSaving(false);
+    if (!res.ok) return setError(res.error);
+    props.onSaved({ name: res.data.name, tagline: res.data.tagline });
   };
 
   return (
@@ -169,19 +173,26 @@ function EditForm(props: {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
+          aria-label="Display name"
+          maxLength={board.maxNameLength}
           required
-          className="h-9 w-full min-w-0 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors focus-visible:border-primary md:w-44"
+          className="h-9 w-full min-w-0 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40 md:w-44"
         />
         <input
           value={tagline}
           onChange={(e) => setTagline(e.target.value)}
+          aria-label="Tagline"
+          maxLength={board.maxTaglineLength}
           placeholder="one line about it"
-          className="h-9 w-full min-w-0 flex-1 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary"
+          className="h-9 w-full min-w-0 flex-1 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
         />
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <button className="cursor-pointer rounded-full bg-primary px-3 py-1.5 font-bold text-primary-foreground transition-colors hover:bg-primary/85">
-          save
+        <button
+          disabled={saving}
+          className="cursor-pointer rounded-full bg-primary px-3 py-1.5 font-bold text-primary-foreground transition-colors hover:bg-primary/85 disabled:cursor-wait disabled:opacity-60"
+        >
+          {saving ? "saving…" : "save"}
         </button>
         <button
           type="button"
@@ -190,7 +201,7 @@ function EditForm(props: {
         >
           cancel
         </button>
-        {error && <span className="text-destructive">{error}</span>}
+        {error && <span role="alert" className="text-destructive">{error}</span>}
       </div>
     </form>
   );

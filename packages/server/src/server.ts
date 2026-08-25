@@ -45,7 +45,15 @@ const server = Bun.serve<SocketData, string>({
       ws.subscribe(BOARD_TOPIC);
     },
     message(ws, msg) {
-      if (ws.data.client) handleMessage(ws.data.client, String(msg));
+      if (!ws.data.client) return;
+      // handleMessage reaches SQLite - countHit is a write, and every {"t":"view"}
+      // message gets there. A throw inside a websocket handler ends the process, so one
+      // client and one bad moment would disconnect everyone else.
+      try {
+        handleMessage(ws.data.client, String(msg));
+      } catch (err) {
+        log("message_failed", { error: String(err) });
+      }
     },
     close(ws) {
       if (ws.data.client) removeClient(ws.data.client);
@@ -108,6 +116,21 @@ function upgradeToMiner(req: Request, srv: Bun.Server<SocketData>): Response | u
     address: clientAddress(req.headers, srv.requestIP(req)?.address),
   };
   return srv.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
+}
+
+// The last net. A throw anywhere else - a socket callback, a promise nobody awaited -
+// ends the Bun process, and unlike SIGTERM it skips the flush below, losing every share
+// credited since the last write. Restarting is still right; losing the counters is not.
+for (const event of ["uncaughtException", "unhandledRejection"] as const) {
+  process.on(event, (err) => {
+    log("fatal", { event, error: String(err) });
+    try {
+      flush();
+    } catch {
+      /* already the failing path - exiting matters more than the last interval */
+    }
+    process.exit(1);
+  });
 }
 
 let shuttingDown = false;

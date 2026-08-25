@@ -253,6 +253,18 @@ Back up the database on a schedule:
 0 4 * * *  cd /srv/outmine && docker compose exec -T app bun scripts/backup.ts
 ```
 
+`scripts/backup.ts` uses `VACUUM INTO`, which takes a consistent snapshot without
+stopping writers - unlike copying the file, which can catch a torn page mid-checkpoint.
+Snapshots land in `./backups`, a second bind mount, rather than beside the database in
+`./data`: fifteen copies of a file in the same directory as the file survive a bad
+`DELETE` and nothing else. Point that mount at another disk, or rsync it off the host.
+
+Both mounts have to be writable by the image's `bun` user before the first start:
+
+```
+sudo chown -R 1000:1000 ./data ./backups
+```
+
 `ADMIN_TOKEN` enables `DELETE /api/listings/:id`, the only way to take a listing down
 short of editing SQLite by hand.
 

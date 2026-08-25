@@ -7,7 +7,7 @@ import { StatTile } from "./ui";
 const SWEEP = 75;
 
 export function MiningPanel(props: {
-  name: string; hashrate: number; accepted: number; rejected: number;
+  name: string; status: string; hashrate: number; accepted: number; rejected: number;
   threads: number; setThreads: (n: number) => void;
   throttle: number; setThrottle: (n: number) => void; onStop: () => void;
 }) {
@@ -42,6 +42,16 @@ export function MiningPanel(props: {
           stop
         </button>
       </div>
+
+      {/* The one place the server gets to speak. Without it "mining is at capacity",
+          "pool reconnecting" and - the sharp one - "too many invalid shares", after
+          which the server has already stopped counting this miner, are all invisible
+          while the dial below carries on reading perfectly healthy. */}
+      {props.status !== "connected" && (
+        <p role="status" className="mt-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+          {props.status}
+        </p>
+      )}
 
       <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-stretch">
         <Gauge load={load} hashrate={props.hashrate} />

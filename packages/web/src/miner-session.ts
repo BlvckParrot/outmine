@@ -10,7 +10,7 @@ import { rememberListing } from "./storage";
 
 const EMPTY: BoardSnapshot = {
   entries: [], pending: [], total: 0, limit: 1, threshold: 1, iconMinPoints: Infinity,
-  online: 0, mining: 0, feed: [],
+  maxNameLength: 60, maxTaglineLength: 200, online: 0, mining: 0, feed: [],
 };
 
 /** Reconnect delay, doubling up to the ceiling and reset by a connection that opens.
@@ -35,9 +35,28 @@ const RETRY_SPREAD_MS = 10_000;
  *  it because it describes the load, not the page. */
 let firstView = true;
 
+/** Sends only when the socket is actually open, and says whether it did.
+ *
+ *  `ws.current?.send(...)` guards null, not readyState. The socket is assigned
+ *  synchronously on creation, so it is non-null and CONNECTING for the whole of every
+ *  reconnect backoff - up to thirty seconds - and `send` throws InvalidStateError in
+ *  that state. The throw used to escape `stop()` before `miner.stop()` ran, which left
+ *  every worker hashing at full tilt with the panel, and the stop button, gone. */
+export const send = (socket: WebSocket | null, payload: unknown): boolean => {
+  if (socket?.readyState !== WebSocket.OPEN) return false;
+  socket.send(typeof payload === "string" ? payload : JSON.stringify(payload));
+  return true;
+};
+
 export type MinerSession = {
   board: BoardSnapshot;
+  /** The last thing worth telling the visitor: a connection state, or the reason the
+   *  server refused something. Rendered by MiningPanel. */
   status: string;
+  /** Whether the socket is up. Separate from `status` because the two answer different
+   *  questions: a server that said "at capacity" is still connected, and the board is
+   *  still live, so the two must not share one flag. */
+  online: boolean;
   mineFor: string | null;
   hashrate: number;
   accepted: number;
@@ -53,6 +72,7 @@ export type MinerSession = {
 export function useMiner(path: string): MinerSession {
   const [board, setBoard] = useState<BoardSnapshot>(EMPTY);
   const [status, setStatus] = useState("connecting…");
+  const [online, setOnline] = useState(false);
   const [mineFor, setMineFor] = useState<string | null>(null);
   const [hashrate, setHashrate] = useState(0);
   const [accepted, setAccepted] = useState(0);
@@ -78,7 +98,7 @@ export function useMiner(path: string): MinerSession {
 
   useEffect(() => {
     miner.current = new Miner(
-      (jobId, nonce) => ws.current?.send(JSON.stringify({ t: "share", jobId, nonce })),
+      (jobId, nonce) => send(ws.current, { t: "share", jobId, nonce }),
       setHashrate,
     );
     return () => miner.current?.stop();
@@ -87,31 +107,44 @@ export function useMiner(path: string): MinerSession {
   useEffect(() => {
     let closed = false;
     let delay = RECONNECT_MIN_MS;
+    // Retained so the effect can clear it. A reconnect already scheduled when the hook
+    // tears down would otherwise still fire and open a socket nobody closes.
+    let retry: ReturnType<typeof setTimeout> | null = null;
     const connect = () => {
+      if (closed) return;
       const socket = new WebSocket(wsUrl("/ws"));
       ws.current = socket;
       socket.onopen = () => {
         setStatus("connected");
+        setOnline(true);
         delay = RECONNECT_MIN_MS;
         // Resume after a drop. The server forgets everything about a closed socket, so
         // without this the workers keep hashing into nothing: the UI still shows a
         // healthy hashrate while every share is discarded.
-        if (mineForRef.current) socket.send(JSON.stringify({ t: "mine", listingId: mineForRef.current }));
+        if (mineForRef.current) send(socket, { t: "mine", listingId: mineForRef.current });
         if (pendingView.current) {
-          socket.send(pendingView.current);
+          send(socket, pendingView.current);
           pendingView.current = null;
         }
       };
       socket.onclose = () => {
         setStatus("reconnecting…");
+        setOnline(false);
         if (closed) return;
         // Full jitter: anywhere in [0, delay), not delay give or take a little. Half of
         // a synchronised crowd still arrives together if the spread is narrow.
-        setTimeout(connect, Math.random() * delay);
+        retry = setTimeout(connect, Math.random() * delay);
         delay = Math.min(delay * 2, RECONNECT_MAX_MS);
       };
       socket.onmessage = (e) => {
-        const msg: ServerMessage = JSON.parse(e.data);
+        // An assertion, not a parse: a frame that is not JSON throws here, and there is
+        // no error boundary above this to catch it.
+        let msg: ServerMessage;
+        try {
+          msg = JSON.parse(e.data);
+        } catch {
+          return;
+        }
         if (msg.t === "board") setBoard(msg);
         if (msg.t === "job") miner.current?.setJob(msg);
         if (msg.t === "shareResult") (msg.ok ? setAccepted : setRejected)((n) => n + 1);
@@ -124,7 +157,7 @@ export function useMiner(path: string): MinerSession {
             const listingId = mineForRef.current;
             setTimeout(() => {
               if (mineForRef.current !== listingId) return; // they moved on
-              ws.current?.send(JSON.stringify({ t: "mine", listingId }));
+              send(ws.current, { t: "mine", listingId });
             }, RETRY_MIN_MS + Math.random() * RETRY_SPREAD_MS);
           }
         }
@@ -133,6 +166,7 @@ export function useMiner(path: string): MinerSession {
     connect();
     return () => {
       closed = true;
+      if (retry) clearTimeout(retry);
       ws.current?.close();
     };
   }, []);
@@ -147,8 +181,7 @@ export function useMiner(path: string): MinerSession {
     });
     firstView = false;
 
-    if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(message);
-    else pendingView.current = message; // sent by onopen
+    if (!send(ws.current, message)) pendingView.current = message; // sent by onopen
   }, [path]);
 
   // Report our hashrate so the board can show per-listing totals.
@@ -162,9 +195,7 @@ export function useMiner(path: string): MinerSession {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (ws.current?.readyState === WebSocket.OPEN) {
-        ws.current.send(JSON.stringify({ t: "hashrate", hs: hashrateRef.current }));
-      }
+      send(ws.current, { t: "hashrate", hs: hashrateRef.current });
     }, HASHRATE_REPORT_MS);
     return () => clearInterval(timer);
   }, []);
@@ -177,20 +208,29 @@ export function useMiner(path: string): MinerSession {
 
   const start = (listingId: string) => {
     setMineFor(listingId);
+    // Written straight to the ref as well as through setState. onopen resumes from this
+    // ref, and a `mine` pressed during a reconnect only survives if the ref is already
+    // right - setState lands a render later, which is after the socket may have opened.
+    mineForRef.current = listingId;
     rememberListing(listingId);
-    ws.current?.send(JSON.stringify({ t: "mine", listingId }));
+    send(ws.current, { t: "mine", listingId });
     miner.current?.start(threads);
   };
 
   const stop = () => {
     setMineFor(null);
-    ws.current?.send(JSON.stringify({ t: "stop" }));
+    mineForRef.current = null;
+    // Workers first. Telling the server is the part that can fail - and the part that
+    // matters least: a socket that never got the message drops the miner on close
+    // anyway, while a worker nobody stopped keeps a laptop at full tilt with no way
+    // left on screen to stop it.
     miner.current?.stop();
     setHashrate(0);
+    send(ws.current, { t: "stop" });
   };
 
   return {
-    board, status, mineFor, hashrate, accepted, rejected,
+    board, status, online, mineFor, hashrate, accepted, rejected,
     threads, setThreads, throttle, setThrottle, start, stop,
   };
 }

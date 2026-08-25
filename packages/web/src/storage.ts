@@ -44,10 +44,17 @@ export const rememberTheme = (theme: Theme) => write("outmine:theme", theme);
  *  is not kept here it is gone for good and nothing can prove the listing is yours. */
 export type Owned = { id: string; token: string };
 
+const isOwned = (value: unknown): value is Owned =>
+  typeof value === "object" && value !== null &&
+  typeof (value as Owned).id === "string" && typeof (value as Owned).token === "string";
+
 export const ownedListings = (): Owned[] => {
   try {
-    const parsed = JSON.parse(read("outmine:owned") ?? "[]");
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed: unknown = JSON.parse(read("outmine:owned") ?? "[]");
+    // Every element checked, not just the array itself. `[null]` satisfied Array.isArray
+    // and then reached `o.id` during render - and with no error boundary above it that
+    // is a permanently blank site, because localStorage survives the reload.
+    return Array.isArray(parsed) ? parsed.filter(isOwned) : [];
   } catch {
     return []; // hand-edited or written by an older shape: start over rather than throw
   }

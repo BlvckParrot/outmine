@@ -56,13 +56,19 @@ COPY packages/web/package.json ./packages/web/
 RUN bun install --production --frozen-lockfile
 COPY packages/protocol ./packages/protocol
 COPY packages/server ./packages/server
+# scripts/backup.ts runs inside this container - README documents it as a cron line
+# through `docker compose exec`. Without this the path does not exist and the nightly
+# backup has never once succeeded.
+COPY scripts ./scripts
 # Laid out as in the repo so the server's default WEB_DIST (../../web/dist relative to
 # its own source) resolves without configuration.
 COPY --from=web /app/packages/web/dist ./packages/web/dist
 
-# The database lives here and is the only thing the process writes, so it is the only
-# thing it owns. Everything else stays root-owned and read-only to the app.
-RUN mkdir -p data && chown bun:bun data
+# The database and the backups are the only things the process writes, so they are the
+# only things it owns. Everything else stays root-owned and read-only to the app.
+# Separate directories so they can be separate mounts: a backup on the same volume as
+# the database survives a bad DELETE and not much else.
+RUN mkdir -p data backups && chown bun:bun data backups
 USER bun
 
 EXPOSE 3000

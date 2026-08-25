@@ -6,3 +6,6 @@ packages/web/public/mine-*.mjs
 packages/web/public/mine-*.wasm
 data/
 .env
+
+# Database snapshots from scripts/backup.ts.
+backups/

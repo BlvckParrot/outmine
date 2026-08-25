@@ -56,12 +56,16 @@ export const Avatar = ({ entry, size = "md", dim }: {
   </span>
 );
 
-/** The panel shape the whole site is built out of. */
-export const Card = ({ className = "", children }: {
+/** The panel shape the whole site is built out of.
+ *
+ *  `role` is passed through so a card whose text changes in place - the board's empty
+ *  and searching states - can be announced rather than silently swapped. */
+export const Card = ({ className = "", role, children }: {
   className?: string;
+  role?: string;
   children: React.ReactNode;
 }) => (
-  <section className={`rounded-2xl bg-card shadow-[var(--shadow-card)] ${className}`}>
+  <section role={role} className={`rounded-2xl bg-card shadow-[var(--shadow-card)] ${className}`}>
     {children}
   </section>
 );

@@ -60,6 +60,9 @@ export function Home() {
       : { entries: [], pending: [], total: 0, limit: 1 };
 
   const mine = (id: string) => (consented ? startMining(id) : accept());
+  // No answer yet for the query currently on screen, which is not the same as an answer
+  // of "nothing". Only meaningful off the live view, where the board comes from the socket.
+  const loading = !live && !page;
   const limit = Math.max(1, view.limit);
   const pageCount = Math.max(1, Math.ceil(view.total / limit));
   const current = Math.floor(offset / limit);
@@ -88,22 +91,31 @@ export function Home() {
             </TabButton>
           </div>
           <input
+            type="search"
+            aria-label="Search the board"
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             placeholder="search"
-            className="ml-auto h-8 w-40 rounded-full border border-input bg-card px-3 text-xs outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary"
+            maxLength={64}
+            className="ml-auto h-8 w-40 rounded-full border border-input bg-card px-3 text-xs outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
           />
         </div>
 
         {view.entries.length === 0 && (
-          <Card className="p-6 text-sm text-muted-foreground">
-            {q
-              ? `Nothing matches "${q}".`
-              : "Nothing on the board yet. A listing appears once someone has mined for it."}
+          <Card className="p-6 text-sm text-muted-foreground" role="status">
+            {/* An unanswered request is not an empty result. `page` is null until the
+                first response for the current query lands, and reading that as "no
+                matches" put `Nothing matches "acme"` on screen for a whole round trip
+                at the start of every single search. */}
+            {loading
+              ? "Searching…"
+              : q
+                ? `Nothing matches "${q}".`
+                : "Nothing on the board yet. A listing appears once someone has mined for it."}
           </Card>
         )}
 
-        <ol>
+        <ol aria-label={q ? `Search results for ${q}` : "Leaderboard"}>
           {view.entries.flatMap((entry, i) => {
             const rank = offset + i + 1;
             // A search result is the Nth match, not the Nth on the board, so the first

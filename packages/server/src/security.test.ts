@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cleanText, clientAddress, originAllowed, secretsMatch } from "./security";
+import { blockedWord, cleanText, clientAddress, originAllowed, secretsMatch } from "./security";
 
 // The characters under test are invisible. Pasting them into the source would make
 // this file unreviewable - git even classifies it as binary - so they are built from
@@ -75,4 +75,25 @@ test("cleanText can empty a string that looked non-empty", () => {
   // Callers must treat the result as possibly empty: a name of pure zero-width
   // characters would otherwise render as a blank row on the board.
   expect(cleanText(ZERO_WIDTH_SPACE.repeat(3))).toBe("");
+});
+
+// --- what a public board will not carry -------------------------------------------------
+
+test.each([
+  ["Free porn here", "porn"],
+  ["XXX", "xxx"],
+  ["nsfw stuff", "nsfw"],
+  ["OnlyFans mirror", "OnlyFans"],
+])("%s is refused", (text, word) => {
+  expect(blockedWord(text)?.toLowerCase()).toBe(word.toLowerCase());
+});
+
+test.each([
+  "Popcorn Weekly",   // the Scunthorpe rule: a substring match gets this wrong
+  "Escortech Ltd",
+  "XXXIV Holdings",
+  "a perfectly ordinary tagline",
+  "",
+])("%p is left alone", (text) => {
+  expect(blockedWord(text)).toBeNull();
 });

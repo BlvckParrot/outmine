@@ -141,3 +141,71 @@ test("close() stops the reconnect loop for good", async () => {
   expect(connects).toBe(after);
   server.stop(true);
 });
+
+// --- what the pool is not trusted with --------------------------------------------------
+
+test.each([
+  ["null", null],
+  ["a string", "hard"],
+  ["zero", 0],
+  ["negative", -1],
+])("difficulty of %s never reaches the scorer", (_name, value) => {
+  const diffs: number[] = [];
+  const errors: unknown[] = [];
+  const client = makeClient({ onDifficulty: (d) => void diffs.push(d), onError: (e) => void errors.push(e) });
+
+  client.feed(JSON.stringify({ id: null, method: "mining.set_difficulty", params: [value] }) + "\n");
+
+  // creditShare multiplies this into `score REAL`, and score + NaN is NaN permanently.
+  expect(diffs).toEqual([]);
+  expect(errors).toHaveLength(1);
+});
+
+test("a usable difficulty still gets through", () => {
+  const diffs: number[] = [];
+  const client = makeClient({ onDifficulty: (d) => void diffs.push(d) });
+  client.feed(JSON.stringify({ id: null, method: "mining.set_difficulty", params: [0.25] }) + "\n");
+  expect(diffs).toEqual([0.25]);
+});
+
+test.each([
+  [1_000_000_000, 4], // a padStart width of a billion, per miner per job
+  [0, 4],
+  ["four", 4],
+  [8, 8], // the largest that is actually a stratum extranonce2
+  [3, 3],
+])("an extranonce2 size of %p is clamped to %i", (sent, expected) => {
+  const sizes: number[] = [];
+  const client = makeClient({ onSubscribed: (_e1, size) => void sizes.push(size) });
+
+  const id = client.subscribe();
+  client.feed(JSON.stringify({ id, result: [[], "abcd", sent], error: null }) + "\n");
+
+  expect(sizes).toEqual([expected]);
+});
+
+test("a refused login leaves the backoff alone and reports why", () => {
+  const errors: unknown[] = [];
+  const client = makeClient({ onError: (e) => void errors.push(e) });
+
+  const id = client.authorize();
+  client.feed(JSON.stringify({ id, result: false, error: "unauthorized worker" }) + "\n");
+
+  // The delay used to be reset the moment the TCP connection was accepted, which is the
+  // one thing a pool does even when it is refusing us - so the 1s -> 60s ladder never
+  // engaged and a rejected login turned into a reconnect flood from our address.
+  expect(errors).toEqual(["unauthorized worker"]);
+  client.close();
+});
+
+test("an accepted login is what clears the backoff", () => {
+  const errors: unknown[] = [];
+  const client = makeClient({ onError: (e) => void errors.push(e) });
+
+  const id = client.authorize();
+  client.feed(JSON.stringify({ id, result: true, error: null }) + "\n");
+
+  expect(client.backoffMs).toBe(1_000);
+  expect(errors).toEqual([]);
+  client.close();
+});

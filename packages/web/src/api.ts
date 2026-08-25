@@ -7,11 +7,37 @@
 // everything stays same-origin and the deployed behaviour is unchanged.
 import { useEffect, useState } from "react";
 
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || location.origin;
+// Read when a URL is built rather than when this module loads. At module scope it made
+// importing anything that reaches api.ts require a browser - `location` is not defined
+// in a test runner, so a unit test of a pure function three imports away failed on a
+// line it never runs.
+const origin = () => import.meta.env.VITE_API_ORIGIN || location.origin;
 
-export const apiUrl = (path: string) => `${API_ORIGIN}${path}`;
+export const apiUrl = (path: string) => `${origin()}${path}`;
 
-export const wsUrl = (path: string) => `${API_ORIGIN.replace(/^http/, "ws")}${path}`;
+export const wsUrl = (path: string) => `${origin().replace(/^http/, "ws")}${path}`;
+
+/** A write that reports failure instead of throwing it.
+ *
+ *  Every form used to `await fetch(...)` and then `await res.json()` bare. A server
+ *  that is down rejects the first; a proxy answering with an HTML 502 rejects the
+ *  second. Either way the rejection escaped the submit handler, so the button did
+ *  nothing at all - no message, no spinner, nothing on screen to say why. `data.error`
+ *  was read unguarded too, so an error body shaped differently rendered "undefined". */
+export async function request<T>(
+  path: string,
+  init: RequestInit,
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(path), init);
+  } catch {
+    return { ok: false, error: "could not reach the server — check your connection" };
+  }
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) return { ok: false, error: body?.error ?? `failed (${res.status})` };
+  return { ok: true, data: body as T };
+}
 
 /** Fetches `path` and keeps it fresh, or fetches it once when `everyMs` is omitted.
  *
@@ -24,6 +50,10 @@ export function usePolled<T>(path: string | null, everyMs?: number): T | null {
 
   useEffect(() => {
     if (!path) return;
+    // A changed path is a different question. Without this the previous query's rows
+    // stayed on screen under the new search until its response landed, and `null` is
+    // also how the caller tells "no answer yet" from "no results" - see Home.
+    setData(null);
     let live = true;
     const load = () =>
       fetch(apiUrl(path))

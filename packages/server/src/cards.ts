@@ -5,7 +5,7 @@
 // og:image, so the SVG below is rendered to PNG on the way out. The badge stays SVG,
 // which is what shields-style badges are and what GitHub renders happily.
 import { Resvg } from "@resvg/resvg-js";
-import { points, POINT_SCALE, type ListingDetail } from "@outmine/protocol";
+import { points, type ListingDetail } from "@outmine/protocol";
 import { config } from "./config";
 
 const FONT_DIR = new URL("../assets/", import.meta.url).pathname;
@@ -108,7 +108,11 @@ const CACHE_MAX = 200;
 const cache = new Map<string, { png: Buffer; at: number }>();
 
 export function cardPng(listing: ListingDetail): Buffer {
-  const key = `${listing.id}:${listing.rank}:${Math.round(listing.score * POINT_SCALE)}`;
+  // Rank, not score. Score moves on every flush for any listing anyone is mining, so a
+  // score in the key changed the key faster than the TTL could ever expire it - the
+  // cache missed on exactly the listings being shared, which are the ones it is for.
+  // A card up to CACHE_TTL_MS out of date is a social preview, not the board.
+  const key = `${listing.id}:${listing.rank}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.png;
 

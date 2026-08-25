@@ -136,14 +136,18 @@ export function addClient(ws: ServerWebSocket<SocketData>, address: string): Cli
  *  quadratic in the number of visitors at exactly the moment the server had least to
  *  spare. */
 function sendBoard(client: Client) {
-  if (!lastBoard || Date.now() - lastBoardAt >= config.board.broadcastMs) {
-    lastBoard = JSON.stringify({ t: "board", ...boardSnapshot() });
-    lastBoardAt = Date.now();
-  }
+  // The whole thing is inside the try, not just the send. Building a snapshot is three
+  // queries, and a throw here reaches Bun's websocket open handler, which ends the
+  // process - so a database that cannot answer for a moment would take the site down
+  // rather than cost one visitor their first paint. The next broadcast reaches them.
   try {
+    if (!lastBoard || Date.now() - lastBoardAt >= config.board.broadcastMs) {
+      lastBoard = JSON.stringify({ t: "board", ...boardSnapshot() });
+      lastBoardAt = Date.now();
+    }
     client.ws.send(lastBoard);
-  } catch {
-    /* socket already gone; the close handler cleans up */
+  } catch (err) {
+    throttledLog("send_board_failed", { error: String(err) });
   }
 }
 
@@ -405,6 +409,12 @@ function openConnection(): PoolConnection {
         // every header built from the old one - hence a re-send, not a no-op.
         conn.extranonce1 = extranonce1;
         conn.extranonce2Size = size || 4;
+        // And the remembered jobs go with it. They were built on the old extranonce1,
+        // so submitShare would still find them, send them, and have them rejected -
+        // against a badSubmits counter that only an accepted share clears. Reconnecting
+        // is not something a miner should be cut off for.
+        conn.jobs.clear();
+        conn.currentJobId = null;
         broadcastJob(conn);
       },
       onDifficulty: (difficulty) => {
@@ -428,7 +438,10 @@ function openConnection(): PoolConnection {
           conn.acceptedInWindow++;
           creditShare(miner, conn.difficulty);
         }
-        send(miner, { t: "shareResult", ok, error: ok ? null : String(err) });
+        // The pool's own words are logged, not forwarded: they are untrusted
+        // third-party text, and "Invalid share" tells a visitor nothing they can act on.
+        if (!ok) throttledLog("share_rejected", { error: String(err) });
+        send(miner, { t: "shareResult", ok, error: ok ? null : "rejected by the pool" });
       },
       onError: (err) => {
         throttledLog("pool_error", { error: String(err) });
@@ -639,6 +652,8 @@ function boardSnapshot(): BoardSnapshot {
     limit: config.board.entries,
     threshold: config.board.visibilityThreshold,
     iconMinPoints: config.board.iconMinPoints,
+    maxNameLength: config.board.maxNameLength,
+    maxTaglineLength: config.board.maxTaglineLength,
     online: clients.size,
     mining: miningCount(),
     feed: feed.slice(-config.board.feedEntries),
@@ -658,6 +673,34 @@ export function pushFeed(text: string) {
   while (feed.length > config.board.feedEntries) feed.shift();
 }
 
+/** Forgets a listing that is about to be deleted. Call before the row goes.
+ *
+ *  Without this a takedown stops the whole site scoring. The miners on that listing
+ *  keep crediting into `unflushed`, and the next flush tries to INSERT a share_bucket
+ *  whose listing_id no longer exists. That fails the foreign key, and creditShares runs
+ *  the batch in one transaction - so the rollback takes every *other* listing shares
+ *  with it, and flush correctly keeps the counters to retry, forever. One takedown, and
+ *  nothing reaches SQLite again until a restart, with one `flush_failed` line to say so. */
+export function dropListing(id: string) {
+  for (const client of clients) {
+    if (client.listingId !== id) continue;
+    send(client, { t: "error", message: "this listing has been removed" });
+    stopMining(client);
+  }
+  unflushed.delete(id);
+}
+
+/** Consecutive failed flushes before the process gives up and lets the supervisor
+ *  restart it.
+ *
+ *  A flush that keeps failing is a database that is gone, and everything above this
+ *  line is written to keep running through exactly that - the loops are guarded, the
+ *  counters are kept, /health answers 503. But `restart: unless-stopped` only reacts to
+ *  a process that exits, so a container that is unhealthy and alive stays in service
+ *  and keeps taking visitors' CPU for shares it can no longer record. */
+const FLUSH_FAILURES_BEFORE_EXIT = 5;
+let flushFailures = 0;
+
 /** Writes the in-memory counters to SQLite and flips listings past the PoW gate. */
 export function flush() {
   if (unflushed.size === 0) return;
@@ -668,11 +711,16 @@ export function flush() {
       pushFeed(`${name} mined its way onto the board`);
       log("gate_passed", { listingId: id, name });
     }
+    flushFailures = 0;
   } catch (err) {
     // Counters stay put so the next flush retries them. Clearing first - the obvious
     // order - would throw away shares that were mined, accepted by the pool and paid
     // for, on any transient database error.
-    log("flush_failed", { error: String(err), listings: batch.length });
+    log("flush_failed", { error: String(err), listings: batch.length, run: ++flushFailures });
+    if (flushFailures >= FLUSH_FAILURES_BEFORE_EXIT) {
+      log("flush_failed_fatal", { runs: flushFailures });
+      process.exit(1);
+    }
     return;
   }
 
@@ -695,10 +743,25 @@ export const loopLag = () => lag;
 let lag = 0;
 let lastTick = 0;
 
-export function startLoops(server: Bun.Server<SocketData>) {
-  setInterval(flush, config.board.flushMs);
-  setInterval(tuneConnections, TUNE_MS);
+/** setInterval with a net under it.
+ *
+ *  An uncaught throw in a timer ends the Bun process, and unlike a signal it skips the
+ *  flush in server.ts - so a transient SQLite error inside one of these loops would
+ *  cost every share credited since the last write. Each of the three reaches the
+ *  database, and a loop that failed once is very likely to succeed on its next tick. */
+const everyMs = (ms: number, loop: string, fn: () => void) =>
   setInterval(() => {
+    try {
+      fn();
+    } catch (err) {
+      throttledLog("loop_failed", { loop, error: String(err) });
+    }
+  }, ms);
+
+export function startLoops(server: Bun.Server<SocketData>) {
+  everyMs(config.board.flushMs, "flush", flush);
+  everyMs(TUNE_MS, "tune", tuneConnections);
+  everyMs(config.board.broadcastMs, "broadcast", () => {
     const tick = Date.now();
     if (lastTick) lag = Math.max(0, tick - lastTick - config.board.broadcastMs);
     lastTick = tick;
@@ -714,5 +777,5 @@ export function startLoops(server: Bun.Server<SocketData>) {
     // replaced did both per socket, which at a few thousand of them is the broadcast
     // interval spent inside the broadcast.
     server.publish(BOARD_TOPIC, json, true);
-  }, config.board.broadcastMs);
+  });
 }

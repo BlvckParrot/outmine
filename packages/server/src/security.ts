@@ -49,13 +49,34 @@ export function clientAddress(headers: Headers, socketAddress: string | undefine
 }
 
 /** Compares two secrets without leaking their contents through how long it takes.
- *  Unequal lengths are rejected first, which is unavoidable and harmless here. */
+ *
+ *  Both sides are hashed first so the comparison always runs over 32 bytes. Comparing
+ *  the raw strings meant returning early on a length mismatch, and with no rate limit
+ *  on the routes that call this - see the admin routes in routes.ts - that early
+ *  return is a length oracle: it narrows the search space before guessing starts. */
 export function secretsMatch(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  const digest = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest();
+  return timingSafeEqual(digest(a), digest(b));
 }
+
+/** The first blocked word in `value`, or null.
+ *
+ *  Whole-word and case-insensitive, so it catches "porn" and leaves "popcorn" alone -
+ *  the Scunthorpe rule, which a substring match gets wrong on real domain names.
+ *
+ *  ponytail: a literal word list. It misses "p0rn" and every other spelling, and it is
+ *  meant to: the admin takedown route is what actually enforces the rules, and this
+ *  only keeps the unmistakable cases out of the board, the OG image and the page title
+ *  in the seconds before anyone sees them. Reach for a real moderation service if this
+ *  ever becomes the thing standing between the board and its reputation. */
+const BLOCKED = config.security.blockedWords.length > 0
+  ? new RegExp(
+      `\\b(${config.security.blockedWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+      "i",
+    )
+  : null;
+
+export const blockedWord = (value: string): string | null => BLOCKED?.exec(value)?.[0] ?? null;
 
 /** Code point ranges with no business in text on a public board: C0 and C1 control
  *  characters, zero-width characters, and the bidirectional overrides.

@@ -1,7 +1,7 @@
 import { ICON_MAX_PX, POINT_SCALE } from "@outmine/protocol";
 import { config } from "./config";
 import { db, type Listing } from "./db";
-import { cleanText, secretsMatch } from "./security";
+import { blockedWord, cleanText, secretsMatch } from "./security";
 
 // Rule borrowed from outbid.lol: the board links to the real thing, not to a
 // tracker. Query strings are stripped, link shorteners are refused.
@@ -71,10 +71,20 @@ function checkedName(raw: string): string {
   // cleanText can empty a string that looked non-empty: a name of pure zero-width
   // characters would render as a blank row on the board.
   if (!name) throw new TargetError("name required");
-  return name;
+  return refused(name, "name");
 }
 
-const checkedTagline = (raw: string) => cleanText(raw).slice(0, config.board.maxTaglineLength);
+const checkedTagline = (raw: string) =>
+  refused(cleanText(raw).slice(0, config.board.maxTaglineLength), "tagline");
+
+/** Both fields go on the public board, into the rasterised share card and into the
+ *  <title> of a page people post elsewhere. Checked after truncation, so a word cannot
+ *  be smuggled past the ceiling by padding in front of it. */
+function refused(value: string, field: string): string {
+  const word = blockedWord(value);
+  if (word) throw new TargetError(`${field} contains a word this board does not take`);
+  return value;
+}
 
 type CreateResult = { listing: Listing; editToken: string };
 
