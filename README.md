@@ -46,15 +46,6 @@ button. Mining only happens while the tab is open.
 Visitors are counted with one message on the socket that is already open — no cookies, no
 third-party scripts, no pixel. Referrers are kept as hosts, never full URLs.
 
-## The score cannot be faked
-
-The browser never reports its own score. It finds nonces; the server submits them to the
-pool; a share counts only once **the pool accepts it**. A forged nonce is rejected upstream,
-so there is nothing to fake and no heuristic to tune.
-
-Verified end to end in `packages/server/src/hub.integration.test.ts`: five random nonces
-produce five rejections and zero score.
-
 ## What it earns
 
 Algorithm choice moves revenue by orders of magnitude; nothing else comes close. Measured
@@ -81,56 +72,6 @@ included.
 Browser mining pays little either way; that is the honest baseline. The leaderboard is what
 makes any of it worth anything — a normal page gets a 30-second visit, a board people
 compete on gets a tab left open for hours.
-
-## Run it
-
-```bash
-git clone --recurse-submodules https://github.com/BlvckParrot/outmine.git
-cd outmine
-cp .env.example .env   # set POOL_USER to your payout address
-bun install
-bun run build          # WASM then frontend, in dependency order
-bun start
-```
-
-The miner's upstream C is two submodules, so a clone without `--recurse-submodules` needs
-`git submodule update --init --filter=blob:none` first. Building the WASM itself needs
-emscripten (`brew install emscripten`).
-
-```bash
-bun run dev            # API and Vite together, on :5173
-bun run check          # typecheck and tests
-```
-
-Development is cross-origin, so `.env` needs `ALLOWED_ORIGINS=http://localhost:5173`.
-
-## Deploy
-
-One small VPS is the whole shape of it: one Bun process, one SQLite file, Caddy in front
-for TLS. The image is built by CI and pushed to GHCR, so the host only ever pulls.
-
-```bash
-sudo chown -R 1000:1000 ./data ./backups   # once, before the first start
-docker compose pull && docker compose up -d
-curl -s https://your-domain/health         # poolHealthy:false means outbound 7444 is blocked
-```
-
-Four things are worth knowing. Every other setting is documented, one commented paragraph
-each, in [.env.example](.env.example).
-
-- **`POOL_USER` is required.** The server refuses to start without it — mining to an empty
-  address credits nobody, and nothing else would complain.
-- **`ALLOWED_ORIGINS` is a security control, not a convenience.** The mining socket accepts
-  any browser that reaches it, so without an origin policy another site can run
-  `new WebSocket("wss://your-host/ws")` and mine on *its* visitors' CPUs against your pool
-  account, skipping the consent banner entirely.
-- **Back up on a schedule.** `scripts/backup.ts` uses `VACUUM INTO`, which snapshots
-  consistently without stopping writers, into a separate mount:
-  ```
-  0 4 * * *  cd /srv/outmine && docker compose exec -T app bun scripts/backup.ts
-  ```
-- **`ADMIN_TOKEN`** enables `DELETE /api/listings/:id`, the only way to take a listing down
-  short of editing SQLite by hand.
 
 ## Licence
 
