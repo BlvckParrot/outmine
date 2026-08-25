@@ -2,6 +2,7 @@
   "name": "@outmine/server",
   "version": "0.0.0",
   "private": true,
+  "license": "GPL-2.0-only",
   "type": "module",
   "scripts": {
     "dev": "bun --env-file=../../.env --watch src/server.ts",

@@ -2,6 +2,7 @@
   "name": "@outmine/web",
   "version": "0.0.0",
   "private": true,
+  "license": "GPL-2.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,1 +1,0 @@
-jde o webovou aplikaci, která bude fungovat podobně jako outbid.lol, s tím rozdílem, že místo placení, bude uživatel těžit přes svůj prohlížeč nějakou kryptoměnu v můj prospěch a kdo natěží nejvíce bude v leaderboardu 

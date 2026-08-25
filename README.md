@@ -1,5 +1,9 @@
 # outmine
 
+[![licence: GPL-2.0](https://img.shields.io/badge/licence-GPL--2.0-2f6f4e)](LICENSE)
+[![image](https://github.com/BlvckParrot/outmine/actions/workflows/image.yml/badge.svg)](https://github.com/BlvckParrot/outmine/actions/workflows/image.yml)
+[![runtime: Bun](https://img.shields.io/badge/runtime-Bun%201.4-b8860b)](https://bun.sh)
+
 A public leaderboard where rank is paid in CPU time instead of money. Same shape as
 outbid.lol — one board, listings competing for the top slot — except the currency is
 browser mining, and the proceeds go to whoever runs the site.
@@ -8,13 +12,57 @@ No accounts. A visitor picks a listing and mines for it, exactly as an outbid.lo
 visitor pays for someone's position. That also kills sybil farming on its own:
 fifty tabs means fifty times the real work.
 
+![The outmine board: the price of first place, the claim form, trending and activity side by side, then the top three as cards and the rest as a table](docs/board.png)
+
+**The product** — [Consent](#consent) · [How scoring cannot be cheated](#how-scoring-cannot-be-cheated) ·
+[The PoW gate](#the-pow-gate) · [Two boards, one table](#two-boards-one-table) ·
+[Sharing](#sharing) · [Owning a listing](#owning-a-listing) · [The look](#the-look)
+
+**The machinery** — [Storage](#storage) · [Pool connections](#pool-connections) ·
+[Capacity](#capacity) · [Abuse guard](#abuse-guard) · [What it earns](#what-it-earns) ·
+[What it counts](#what-it-counts)
+
+**Running it** — [Before deploying](#before-deploying) · [Configuration](#configuration) ·
+[Layout](#layout) · [The API](#the-api) · [Running it](#running-it) · [Deploying](#deploying) ·
+[Developing](#developing) · [Tests](#tests) · [Contributing](#contributing) · [Licence](#licence)
+
+## Consent
+
+Nothing hashes until a visitor says so, and the site is built so that this stays true
+rather than being a promise in a README.
+
+A banner is the first thing on the page, and it says what this is in one line: *this
+site mines cryptocurrency with your CPU*, the proceeds go to the site owner, it will use
+battery. Only after it is accepted does the page offer a listing to mine for.
+
+Accepting it is not the same as starting. **A stored consent still does not start the
+CPU on its own** — a returning visitor is not asked twice, but they still have to press
+a button before a single hash is computed. That is deliberate and it is the one property
+worth testing rather than trusting: `scripts/browser-check.ts` asserts exactly it — it
+reloads with consent already stored, and fails if anything is mining afterwards
+(`didNotAutostart`).
+
+Consent is versioned (`CONSENT_VERSION` in `packages/web/src/storage.ts`). Bumping it
+invalidates every stored answer, which is the only honest way to ask again after the
+terms of what is mined, or how much, have changed.
+
+While mining, the panel carries a thread count and a throttle, both movable mid-run, and
+a stop button that ends it. Mining runs only while the tab is open; closing it is also
+stopping.
+
+`ALLOWED_ORIGINS` is the server-side half of this. Left empty, only same-origin requests
+open a mining socket. Without such a policy any other website could point a
+`new WebSocket("wss://your-host/ws")` at your deployment and mine on *its* visitors'
+CPUs against your pool account, with no banner anywhere. See
+[Before deploying](#before-deploying).
+
 ## How scoring cannot be cheated
 
 The browser never reports its own score. It finds nonces; the server submits them to
 zpool; a share counts only once **the pool accepts it**. A forged nonce is rejected
 upstream, so there is nothing to fake and no heuristic to tune.
 
-Verified end to end in `src/hub.integration.test.ts`: five random nonces produce five
+Verified end to end in `packages/server/src/hub.integration.test.ts`: five random nonces produce five
 rejections and zero score.
 
 ## The PoW gate
@@ -242,6 +290,35 @@ may well go the other way on an x86 browser, where wasm SIMD maps almost one to 
 untested here, and not worth shipping a build that is slower for every Mac visitor on
 the chance that it is faster elsewhere.
 
+## What it counts
+
+Enough to know whether the thing works, and nothing that could say who a visitor was.
+
+A page view is one `view` message on the WebSocket that is already open — no pixel, no
+third-party script, no cookie, nothing an ad blocker has a rule for. A crawler never
+opens a socket, so a crawler never counts as a visit. `first` is set once per page load
+rather than once per socket, so a reconnect after a deploy does not invent a second
+visitor.
+
+What lands in SQLite is already aggregated: one row per day per thing counted, in a
+`traffic` table with `(day, kind, key)` as its key. Days, not timestamps. No addresses,
+no session ids, no per-request rows to join back together later. A year of this is a few
+thousand rows.
+
+Referrers are stored as **hosts**, not URLs. Knowing that people arrive from
+`news.ycombinator.com` is the whole point of the number; the path they came from is
+their business, and a full URL is the part that can carry a search query or a private
+link.
+
+One traffic number is public — `visitsToday` on `/api/stats`, because the board already
+shows how busy it is and hiding the visit count would be a pretence. Everything else,
+including which listings get looked at and who sends the traffic, sits behind
+`/admin/traffic` and `ADMIN_TOKEN`. That page reads better in a browser than as JSON,
+which is why the token travels in the query string — and the two ways a token in a URL
+escapes are the `Referer` of the next click and a cache, so the response carries
+`Referrer-Policy: no-referrer`, `Cache-Control: no-store` and
+`X-Robots-Tag: noindex, nofollow`.
+
 ## Before deploying
 
 Set `POOL_USER` to your payout address. The server refuses to start without it - mining
@@ -358,7 +435,9 @@ packages/server/
   blockheader.ts     stratum job -> the 80 bytes the miner hashes
   listings.ts        target normalisation and every SQL statement in the project
   db.ts              the connection, the pragmas, the migrations, the liveness probe
+  log.ts             one JSON line per event, to stdout
 scripts/             backup, browser check, load test, stratum stub, yield, test setup
+.github/workflows/   image.yml: typecheck and test, then build and push to GHCR
 ```
 
 Bun workspaces. Still one deployed process and one SQLite file; three runtime
@@ -384,6 +463,39 @@ The WASM exports one function, `mine(header, target, nonceStart, nonceEnd)`. The
 loop lives in C because crossing the JS/WASM boundary per hash costs more than a hash.
 Stratum, job handling and merkle math stay in TypeScript on the server, so the browser
 only ever spins nonces.
+
+## The API
+
+Everything the browser does, and everything a script could do instead. No API key: the
+board is public, the two writes that are not are gated by a token.
+
+| | |
+|---|---|
+| `GET /health` | `lagMs` and `poolHealthy`, the two numbers that say whether this is fine |
+| `GET /api/board` | `?window=all\|24h&q=&offset=`; the paged, searchable board |
+| `GET /api/trending` | biggest movers of the last two hours |
+| `GET /api/stats` | the totals behind `/stats` |
+| `GET /api/listings/:id` | one listing, plus `rank` — which the client cannot work out from a single page |
+| `POST /api/listings` | create; returns the edit token **once**. `RATE_MAX` per address per minute |
+| `PATCH /api/listings/:id` | edit name and tagline. `X-Edit-Token` |
+| `PUT /api/listings/:id/icon` | raw PNG body, ≤128px. `X-Edit-Token` and `ICON_MIN_POINTS` |
+| `DELETE /api/listings/:id` | takedown. `X-Admin-Token` |
+| `GET /icon/:id.png` | the uploaded icon |
+| `GET /r/:id` | the outbound click, and the only `GET` that writes |
+| `GET /l/:id` | the listing's page, with its `og:` tags stitched in for crawlers |
+| `GET /og/:id.png`, `/og/home.png` | link preview cards, SVG rasterised by resvg |
+| `GET /badge/:id.svg` | a shields-style rank badge for somebody else's README |
+| `GET /admin/traffic` | the traffic report. `?token=` — see [What it counts](#what-it-counts) |
+| `WS /ws` | the mining socket |
+
+On the socket the browser sends `mine`, `stop`, `share`, `hashrate` and `view`; the
+server sends `board`, `job`, `shareResult` and `error`. Both sides import those types
+from `packages/protocol`, which exists because they were once written twice and drifted:
+`pending` was added to the hub and neither the client nor `/api/board` heard about it.
+
+Errors are `{ "error": "..." }` with a real status code. An `error` on the socket may
+carry `retry: true`, which marks the ones that are about the moment rather than the
+request — the pool is full or backing off — and the client asks again on its own.
 
 ## Running it
 
@@ -417,7 +529,6 @@ it. Building on the server would mean a ~2 GB emscripten pull and ~35 C files th
 
 ```bash
 sudo chown -R 1000:1000 ./data ./backups   # once, before the first start
-docker login ghcr.io                       # private package: a PAT with read:packages
 docker compose pull && docker compose up -d
 ```
 
@@ -501,7 +612,44 @@ discard every share while everything looks healthy. The multiplex test checks th
 miners on one socket get different headers and that each accepted share lands on the
 right listing - crossed credit is silent and the totals still look plausible.
 
+CI runs `typecheck` and `bun test packages/{server,web,protocol}` on every push to
+`main`, and the image is only pushed if both pass. `packages/wasm` is excluded there on
+purpose: `mine.test.ts` imports the compiled emscripten glue at module scope, so it
+needs a full WASM build to even load. Those vectors are what `bun test` covers locally
+once `build.sh` has run.
+
+## Contributing
+
+Issues and pull requests are welcome. `bun run check` has to pass — that is the same
+typecheck and test run CI gates the image on.
+
+The two rules in [Layout](#layout) are the ones worth knowing before changing anything:
+every SQL statement lives in `listings.ts`, and `useMiner` sits above the router.
+
+For anything with a security dimension — the origin policy, the address the rate limiter
+trusts, the token comparisons, the icon decoder — please use GitHub's private security
+advisories rather than a public issue.
+
 ## Licence
 
-The WASM hasher derives from cpuminer-multi, which is GPLv2, so the build output is
-GPLv2 as well.
+**GPL-2.0.** The full text is in [LICENSE](LICENSE), and it covers the whole repository:
+server, browser, protocol and the WASM miner.
+
+That is not a preference, it is what gets compiled in. The miner is built from upstream
+C, and the RinHash lineage states plain version 2 with no "or later" clause — so GPLv3
+and AGPLv3 were never available to the combined work:
+
+| Upstream | Used for | Terms |
+|---|---|---|
+| [cpuminer-multi](https://github.com/litecoincash-project/cpuminer-multi) | `minotaurhash`, sphlib | GPL-2.0-or-later |
+| [cpuminer-opt-rin](https://github.com/Rin-coin/cpuminer-opt-rin) | RinHash, argon2d, BLAKE3, SHA-3 | **GPL-2.0** |
+| [yespower](https://www.openwall.com/yespower/) | inside MinotaurX | BSD-2-Clause |
+| [phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) `ref.c`, [XKCP](https://github.com/XKCP/XKCP), [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) | the portable paths | CC0 / Apache-2.0 |
+
+Those sources are not vendored into this repository — `build.sh` fetches them, and the
+`Dockerfile` pins all three by commit SHA plus one file by digest, which is where anyone
+asking for the corresponding source of a shipped `mine-*.wasm` should look.
+
+The two bundled typefaces, DM Sans and JetBrains Mono, are under the SIL Open Font
+License; their `OFL.txt` ships beside them in `packages/web/public/fonts` and
+`packages/server/assets`.
