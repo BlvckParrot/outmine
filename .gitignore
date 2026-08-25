@@ -1,5 +1,4 @@
 node_modules/
-packages/wasm/vendor/
 packages/wasm/build/
 packages/web/dist/
 packages/web/public/mine-*.mjs

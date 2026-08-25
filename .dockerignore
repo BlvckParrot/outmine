@@ -1,12 +1,14 @@
-# Without this, COPY drags the host's tree into the image and quietly undoes two
-# things the Dockerfile works hard at.
+# Without this, COPY drags the host's tree into the image and quietly undoes what the
+# Dockerfile works hard at.
 #
-# packages/wasm/vendor is the one that matters. The wasm stage clones it at pinned
-# SHAs and verifies argon2's ref.c by digest, and then `COPY packages/wasm ./` used to
-# merge the host's unpinned copy on top - after the sha256sum check had already run.
-# build.sh skips every fetch when the directory is already there, so what got compiled
-# into the miner every visitor runs was whatever happened to be on the builder's disk.
-packages/wasm/vendor
+# packages/wasm/vendor is deliberately NOT excluded any more, and that is the point of
+# it being a submodule. It used to be: the wasm stage cloned at pinned SHAs, then
+# `COPY packages/wasm ./` merged the host's unpinned copy on top - after the digest
+# check had run - and build.sh skips a fetch when the directory is already there, so
+# what got compiled into the miner every visitor runs was whatever was on the builder's
+# disk. Excluding it was the workaround. Now the content in the context is pinned by the
+# commit this repository records, so copying it in is the safe thing rather than the
+# hazard, and the builder has no unpinned copy to leak.
 packages/wasm/build
 
 # node_modules are symlinks into version-pinned .bun paths. Copied over a

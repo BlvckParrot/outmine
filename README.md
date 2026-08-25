@@ -409,6 +409,9 @@ connection, which is the right unit.
 ```
 packages/protocol/   the WebSocket contract, imported by both server and browser
 packages/wasm/       MinotaurX and RinHash hashers, compiled to WASM with emcc
+  build.sh           the whole build; the sources are pinned, so it fetches nothing
+  vendor/            cpuminer-multi and cpuminer-opt-rin, submodules pinned by commit
+  argon2-ref/        argon2's portable fill_segment, the one file not in either upstream
 packages/web/
   index.css          the two palettes, the four faces, the Tailwind theme
   App.tsx            layout: consent, the mining panel, the page the URL names
@@ -438,6 +441,7 @@ packages/server/
   log.ts             one JSON line per event, to stdout
 scripts/             backup, browser check, load test, stratum stub, yield, test setup
 .github/workflows/   image.yml: typecheck and test, then build and push to GHCR
+                     wasm.yml:  the hash vectors, against a real emscripten build
 ```
 
 Bun workspaces. Still one deployed process and one SQLite file; three runtime
@@ -500,14 +504,22 @@ request — the pool is full or backing off — and the client asks again on its
 ## Running it
 
 ```bash
+git clone --recurse-submodules https://github.com/BlvckParrot/outmine.git
+cd outmine
 cp .env.example .env   # set POOL_USER to your BTC address
 bun install
 bun run build          # WASM then frontend, in dependency order
 bun start
 ```
 
-The WASM build needs emscripten (`brew install emscripten`) and clones cpuminer-multi
-on first run.
+The miner's upstream C is two submodules under `packages/wasm/vendor`, so a clone without
+`--recurse-submodules` needs `git submodule update --init --filter=blob:none` before the
+build. `build.sh` says so rather than compiling against empty directories. Partial clone
+rather than shallow: a `--depth 1` fetch cannot reliably reach a recorded commit once
+upstream moves past it.
+
+The WASM build itself needs emscripten (`brew install emscripten`). Nothing else is
+fetched — what goes into the miner is decided by the commits this repository pins.
 
 ## Deploying
 
@@ -613,10 +625,15 @@ miners on one socket get different headers and that each accepted share lands on
 right listing - crossed credit is silent and the totals still look plausible.
 
 CI runs `typecheck` and `bun test packages/{server,web,protocol}` on every push to
-`main`, and the image is only pushed if both pass. `packages/wasm` is excluded there on
-purpose: `mine.test.ts` imports the compiled emscripten glue at module scope, so it
-needs a full WASM build to even load. Those vectors are what `bun test` covers locally
-once `build.sh` has run.
+`main`, and the image is only pushed if both pass. `packages/wasm` is excluded there
+because `mine.test.ts` imports the compiled emscripten glue at module scope, so it needs
+a full WASM build to even load.
+
+That build is what `wasm.yml` does, inside the emsdk container, and it runs only when
+something under `packages/wasm` changes — which includes a submodule bump, the one thing
+that can move the hashes. Without it the miner was compiled by CI and never checked by
+it. It is path-filtered rather than a gate on the image job, because gating would pull
+~2 GB of emsdk on every push; an image can therefore publish while `wasm.yml` is red.
 
 ## Contributing
 
@@ -646,9 +663,12 @@ and AGPLv3 were never available to the combined work:
 | [yespower](https://www.openwall.com/yespower/) | inside MinotaurX | BSD-2-Clause |
 | [phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) `ref.c`, [XKCP](https://github.com/XKCP/XKCP), [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) | the portable paths | CC0 / Apache-2.0 |
 
-Those sources are not vendored into this repository — `build.sh` fetches them, and the
-`Dockerfile` pins all three by commit SHA plus one file by digest, which is where anyone
-asking for the corresponding source of a shipped `mine-*.wasm` should look.
+The two GPL upstreams are **submodules** under `packages/wasm/vendor`, pinned by the
+commits this repository records — so the corresponding source of any shipped
+`mine-*.wasm` is whatever `git submodule status` names at that commit, and bumping one is
+a reviewable change rather than an edit to a build script. Argon2's portable `ref.c` is
+the exception: it is one file that belongs to neither upstream, so it is vendored at
+`packages/wasm/argon2-ref/` with its provenance beside it.
 
 The two bundled typefaces, DM Sans and JetBrains Mono, are under the SIL Open Font
 License; their `OFL.txt` ships beside them in `packages/web/public/fonts` and

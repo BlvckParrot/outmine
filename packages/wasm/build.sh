@@ -14,9 +14,19 @@ OUT=build
 WEB_PUBLIC=../web/public
 mkdir -p "$OUT" "$WEB_PUBLIC"
 
-# Upstreams are gitignored: fetched on first build so the repo stays small.
+# Upstreams are submodules, pinned by the commit this repository records. Nothing here
+# fetches: what gets compiled into the miner every visitor runs is decided by a gitlink
+# somebody reviewed, not by whatever the default branch points at on the day of the build.
 CPU=vendor/cpuminer-multi
 RIN=vendor/cpuminer-opt-rin/algo/rinhash
+
+# A clone without --recurse-submodules leaves these directories empty, and without this
+# the first sign of it is a compiler error thirty lines down about a missing header.
+[ -f "$CPU/algo/minotaur.c" ] && [ -d "$RIN" ] || {
+  echo "vendor/ is empty - this repository uses submodules for the miner sources." >&2
+  echo "  git submodule update --init --filter=blob:none" >&2
+  exit 1
+}
 
 # sphlib, yespower and argon2 all trip these; they are upstream's problem, not ours.
 QUIET=(-Wno-unused-function -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-pointer-sign)
@@ -32,8 +42,6 @@ EMFLAGS=(
 # a fixed heap all measured as noise. See "Why not SIMD" in the README.
 
 sources_minotaurx() {
-  [ -d "$CPU" ] || git clone --depth 1 https://github.com/litecoincash-project/cpuminer-multi.git "$CPU"
-
   # minotaur.c's scanhash driver needs the real miner.h and the whole miner with it.
   # We only want minotaurhash(), so cut the driver off at its own comment marker.
   sed '/^\/\/ Scan driver/,$d' "$CPU/algo/minotaur.c" > "$OUT/minotaur_core.c"
@@ -51,22 +59,16 @@ sources_minotaurx() {
 }
 
 sources_rinhash() {
-  if [ ! -d "$RIN" ]; then
-    # Sparse: the repo is a whole miner and we want one algorithm's worth of it.
-    git clone --depth 1 --filter=blob:none --sparse \
-      https://github.com/Rin-coin/cpuminer-opt-rin.git vendor/cpuminer-opt-rin
-    git -C vendor/cpuminer-opt-rin sparse-checkout set algo/rinhash
-  fi
-  # Upstream ships only argon2's SIMD fill_segment, which needs SSE2 and cpuminer's
-  # simd-utils.h. The portable one comes from Argon2's own reference package.
-  [ -f "$RIN/argon2d/ref.c" ] ||
-    curl -sSfL -o "$RIN/argon2d/ref.c" \
-      https://raw.githubusercontent.com/P-H-C/phc-winner-argon2/master/src/ref.c
-
+  # argon2-ref/ref.c is ours to place: upstream ships only argon2's SIMD fill_segment,
+  # which needs SSE2 and cpuminer's simd-utils.h, so the portable one comes from Argon2's
+  # own package. It used to be curled into the rin checkout, which pulled from master with
+  # no digest and wrote into somebody else's repository - now a submodule, so that would
+  # leave it permanently dirty. Its includes are quoted but resolve through the -I flags
+  # below, against rin's modified argon2 headers rather than upstream's. See its README.
   INC=(-Iinclude/rin -I"$RIN" -I"$RIN/argon2d" -I"$RIN/blake3" -I"$RIN/sha3")
   SRC=(rin.c
        "$RIN/argon2d/argon2.c" "$RIN/argon2d/core.c" "$RIN/argon2d/encoding.c"
-       "$RIN/argon2d/ref.c" "$RIN/argon2d/argon2d_thread.c" "$RIN/blake2/blake2b.c"
+       argon2-ref/ref.c "$RIN/argon2d/argon2d_thread.c" "$RIN/blake2/blake2b.c"
        "$RIN/blake3/blake3.c" "$RIN/blake3/blake3_dispatch.c" "$RIN/blake3/blake3_portable.c"
        "$RIN/sha3/SimpleFIPS202.c" "$RIN/sha3/KeccakSponge.c" "$RIN/sha3/KeccakP-1600-reference.c")
   # BLAKE3 picks NEON on an arm64 host, which would need a file the WASM build never
