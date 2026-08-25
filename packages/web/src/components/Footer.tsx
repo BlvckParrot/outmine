@@ -9,7 +9,18 @@ export function Footer() {
         Rank paid in CPU time ·{" "}
         <a {...linkProps("/faq")} className="text-primary hover:underline">FAQ</a> ·{" "}
         <a {...linkProps("/rules")} className="text-primary hover:underline">Rules</a> ·{" "}
-        <a {...linkProps("/stats")} className="text-primary hover:underline">Stats</a>
+        <a {...linkProps("/stats")} className="text-primary hover:underline">Stats</a> ·{" "}
+        {/* The one link that leaves the site. GPL-2.0 asks anyone running this to point
+            at the source, and a visitor being asked for their CPU has earned the right
+            to go and read what it does. */}
+        <a
+          href="https://github.com/BlvckParrot/outmine"
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary hover:underline"
+        >
+          Source
+        </a>
       </p>
     </footer>
   );
