@@ -397,8 +397,54 @@ bun start
 The WASM build needs emscripten (`brew install emscripten`) and clones cpuminer-multi
 on first run.
 
-Deploy with `docker compose up -d` — Caddy handles TLS, the app is one Bun process,
-SQLite lives in a bind mount.
+## Deploying
+
+One small VPS is the whole shape of it: one Bun process, one SQLite file, Caddy in front
+for TLS. Measured, 5000 concurrent sockets cost about 65 MB — the cheapest plan anywhere
+is several times more than this needs, and a bigger one buys nothing, because the process
+is single-threaded by design and the next step past 5000 is `reusePort`, not more RAM.
+
+What it does need is less common than what it does not: outbound raw TCP on the pool's
+port (plain stratum, not HTTP), a persistent disk for SQLite and its WAL, exactly one
+instance, and no scale-to-zero. That rules out every edge and function runtime, and
+anything that autoscales — two replicas would open two sets of pool sockets from one
+address, which is the flood the connection controller exists to prevent.
+
+The image is built by `.github/workflows/image.yml` and pushed to GHCR; the host pulls
+it. Building on the server would mean a ~2 GB emscripten pull and ~35 C files through
+`emcc -O3` on one core, and it would quietly undo the pinning in the wasm stage — see
+`.dockerignore`.
+
+```bash
+sudo chown -R 1000:1000 ./data ./backups   # once, before the first start
+docker login ghcr.io                       # private package: a PAT with read:packages
+docker compose pull && docker compose up -d
+```
+
+Then check that the pool is actually reachable, which is the one thing a host can quietly
+break:
+
+```bash
+curl -s https://your-domain/health    # poolHealthy:false means outbound 7444 is blocked
+```
+
+### A note on bandwidth
+
+The board snapshot is ~23 kB of JSON, deflated to ~2.7 kB by `perMessageDeflate`, pushed
+every `BOARD_BROADCAST_MS` and skipped entirely when nothing moved. So an idle board costs
+nothing and a busy one costs about 3.5 GB per month per continuously-open tab: ~35 GB at
+ten of them, ~175 GB at fifty. Well inside any VPS traffic allowance, and far outside the
+1 GB/month egress that some "free tier" VMs come with. Doubling `BOARD_BROADCAST_MS` halves
+it without touching code.
+
+### A note on acceptable use
+
+Most hosts ban cryptocurrency mining outright, and some word it broadly enough to cover
+anything adjacent. This server does no hashing — the browsers do — and it holds one
+outbound stratum connection and some WebSockets, at near-zero CPU. That is a real
+distinction and it is worth putting in a pre-sales email rather than finding out
+afterwards. It is not worth hiding: a host that finds out later takes the machine and the
+data with it.
 
 ## Developing
 

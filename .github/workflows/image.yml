@@ -1,0 +1,59 @@
+# Builds the container image and pushes it to GHCR, so the host only ever pulls.
+#
+# Not built on the server on purpose. The wasm stage pulls emscripten/emsdk (~2 GB) and
+# compiles roughly 35 C translation units at -O3 on a single thread, which is a long
+# time and a lot of disk on the smallest VPS. It also defeats the point of the pinned
+# sources: .dockerignore keeps the builder's own packages/wasm/vendor out of the build
+# context precisely because build.sh skips a fetch when the directory is already there -
+# and a fresh runner has no such directory to leak.
+name: image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # Gate. Pushing a tagged image that does not typecheck is worse than not pushing one.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      # Everything except packages/wasm. mine.test.ts imports the compiled glue at module
+      # scope (see createModule in packages/wasm/module.ts), so it needs a full emscripten
+      # build to even load - which is the job below, and not worth doing twice. Those
+      # vectors are what `bun test` covers locally after build.sh has run.
+      - run: bun test packages/server packages/web packages/protocol
+
+  image:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Lowercase and spelled out rather than ${{ github.repository }}: GHCR rejects
+          # an uppercase path, and the repository name carries its capitals.
+          tags: |
+            ghcr.io/blvckparrot/outmine:latest
+            ghcr.io/blvckparrot/outmine:${{ github.sha }}
+          # The wasm layer keys on the three ARG pins in the Dockerfile, so any build
+          # that does not touch packages/wasm skips the clone and the emcc run entirely.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

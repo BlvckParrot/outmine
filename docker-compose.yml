@@ -9,7 +9,14 @@ x-logging: &logging
 
 services:
   app:
-    build: .
+    # Built by .github/workflows/image.yml and pulled here. Building on the host means
+    # a ~2 GB emscripten pull and ~35 C files through emcc -O3 on one core, and it also
+    # undoes the wasm source pinning: .dockerignore exists to keep the builder's own
+    # vendor/ out of the context, and a CI runner has none.
+    #
+    # To build locally instead, swap the two lines below.
+    image: ghcr.io/blvckparrot/outmine:latest
+    # build: .
     restart: unless-stopped
     logging: *logging
     env_file: .env
