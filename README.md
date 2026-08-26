@@ -46,16 +46,6 @@ button. Mining only happens while the tab is open.
 Visitors are counted with one message on the socket that is already open — no cookies, no
 third-party scripts, no pixel. Referrers are kept as hosts, never full URLs.
 
-## What it earns
-
-Algorithm choice moves revenue by orders of magnitude; nothing else comes close. Measured
-on an Apple M-series, one WASM thread, with `bun run bench`:
-
-| | H/s in a browser | zpool's advertised rate |
-|---|---|---|
-| minotaurx | 896 | 0.00013543 /MH/day |
-| **rinhash** | **14,025** | **0.00485204 /MH/day** |
-
 **The hashrate column is measured. The rate column is not.** RinHash runs 15.6x faster in a
 browser because its Argon2d touches 64 KiB where yespower touches 2 MiB — that much is ours
 to verify, and on its own it is reason enough to prefer it. The rate is zpool's own
