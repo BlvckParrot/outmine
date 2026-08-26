@@ -107,7 +107,18 @@ export function Listing({ id }: { id: string }) {
             {copied ? "copied" : "copy badge markdown"}
           </button>
         </div>
-        <img src={apiUrl(`/badge/${id}.svg`)} alt="" className="mt-3 h-5" />
+        {/* Not decorative: the badge is a preview of what the markdown below renders
+            to, and it is the only place the standing appears as an image. */}
+        <img
+          src={apiUrl(`/badge/${id}.svg`)}
+          alt={
+            listing.rank
+              ? `outmine badge: ${listing.name} at #${listing.rank}`
+              : `outmine badge: ${listing.name}, in the queue`
+          }
+          loading="lazy"
+          className="mt-3 h-5"
+        />
         <pre className="mt-2 overflow-x-auto rounded-xl bg-muted p-3 font-mono text-[10px] text-muted-foreground">
           {badgeMarkdown}
         </pre>

@@ -2,7 +2,8 @@
 //
 // The socket and the worker pool are in useMiner, above the router, because they have
 // to survive navigation.
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { isListingPath, isPagePath, normalizePath, pageFor } from "@outmine/protocol";
 import { ConsentBanner } from "./components/ConsentBanner";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
@@ -14,9 +15,10 @@ import { About } from "./pages/About";
 import { Faq } from "./pages/Faq";
 import { Home } from "./pages/Home";
 import { Listing } from "./pages/Listing";
+import { Prose } from "./pages/Prose";
 import { Rules } from "./pages/Rules";
 import { Stats } from "./pages/Stats";
-import { usePath } from "./router";
+import { linkProps, usePath } from "./router";
 import { SessionContext } from "./session";
 import type { Owned } from "./storage";
 import {
@@ -24,8 +26,23 @@ import {
   rememberConsent, rememberListing, rememberOwned,
 } from "./storage";
 
+/** The server puts the right title in the HTML it serves; the router then moves the
+ *  page without it. Left alone, the tab, the history entry and the bookmark all keep
+ *  whatever page the visitor first landed on.
+ *
+ *  Listing pages are not here: their title needs a name the server already wrote into
+ *  the document, and the Listing component fetches asynchronously - re-titling from a
+ *  half-loaded listing would be worse than leaving the server's own title alone. */
+function useTitle(path: string) {
+  useEffect(() => {
+    if (isListingPath(path)) return;
+    document.title = pageFor(path).title;
+  }, [path]);
+}
+
 export default function App() {
   const path = usePath();
+  useTitle(path);
   // The path goes in so the socket can report it: pageviews ride the connection that
   // is already there rather than a second channel of their own.
   const miner = useMiner(path);
@@ -119,11 +136,30 @@ function Page({ path }: { path: string }) {
   const listing = path.match(/^\/l\/([a-z0-9]+)$/i);
   if (listing) return <Listing id={listing[1]!} />;
 
-  switch (path) {
+  // normalizePath, via isPagePath, is why /about/ and /index.html land here rather than
+  // on the 404 the server already decided they are not.
+  if (!isPagePath(path)) return <NotFound />;
+
+  switch (normalizePath(path)) {
     case "/about": return <About />;
     case "/rules": return <Rules />;
     case "/faq": return <Faq />;
     case "/stats": return <Stats />;
     default: return <Home />;
   }
+}
+
+/** The body for the 404 the server sends. Without it every mistyped URL renders as a
+ *  second copy of the board - which is what a crawler was being told too. */
+function NotFound() {
+  return (
+    <Prose title="Not found">
+      <p>
+        No page at this address. The board is{" "}
+        <a {...linkProps("/")} className="text-primary hover:underline">this way</a>, and a
+        listing that used to be here may have been taken down — see{" "}
+        <a {...linkProps("/rules")} className="text-primary hover:underline">the rules</a>.
+      </p>
+    </Prose>
+  );
 }

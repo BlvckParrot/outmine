@@ -9,8 +9,10 @@ import { NONCE, secureHeaders } from "hono/secure-headers";
 import { rateLimiter } from "hono-rate-limiter";
 import { HTTPException } from "hono/http-exception";
 import { validator } from "hono/validator";
-import type {
-  BoardPageResponse, ListingDetail, ListingKind, StatsResponse, TrendingItem,
+import {
+  isKnownPath,
+  type BoardPageResponse, type ListingDetail, type ListingKind, type StatsResponse,
+  type TrendingItem,
 } from "@outmine/protocol";
 import { config } from "./config";
 import { dbAlive, type Listing } from "./db";
@@ -24,7 +26,7 @@ import {
 } from "./listings";
 import { log } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
-import { OG_MARKER, origin, share, siteMeta, withNonce } from "./share";
+import { origin, pageMeta, replaceMeta, share, withNonce } from "./share";
 
 /** Handed in by server.ts, which is the only layer that can see the socket. */
 export type RequestContext = { socketAddress?: string };
@@ -424,11 +426,18 @@ not divide into 30 days of views. A listing taken down since is not listed.</p>`
 
 /** index.html with the crawler tags stitched in. A crawler runs no JavaScript, so the
  *  tags cannot come from the app; index.html is a static file and cannot know the host
- *  it will be served from, so they cannot come from the build either. */
+ *  it will be served from, so they cannot come from the build either.
+ *
+ *  This is also the catch-all, which is why the status is not always 200. Answering
+ *  every URL ever typed at this host with the board makes the site infinitely large to
+ *  a crawler, and every one of those copies competes with the real page. */
 async function indexHandler(c: Context) {
   const index = Bun.file(`${config.webDist}/index.html`);
   if (!(await index.exists())) return c.text("frontend not built - run: bun run build", 503);
-  return c.html(withNonce(c, (await index.text()).replace(OG_MARKER, () => siteMeta(origin(c)))));
+
+  const path = c.req.path;
+  const html = replaceMeta(withNonce(c, await index.text()), () => pageMeta(origin(c), path));
+  return c.html(html, isKnownPath(path) ? 200 : 404);
 }
 
 // Both spellings, and index.html is kept out of the native routes in server.ts, or the

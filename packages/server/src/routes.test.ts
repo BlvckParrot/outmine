@@ -3,7 +3,9 @@
 // The database is a scratch file: scripts/test-setup.ts points DB_PATH at one before
 // anything here imports db.ts.
 import { expect, test } from "bun:test";
+import { CARD_HEIGHT, CARD_WIDTH } from "./cards";
 import { config } from "./config";
+import { creditShares } from "./listings";
 import { app } from "./routes";
 
 /** Every request carries its own address. The rate limit is keyed on it, so without
@@ -244,7 +246,13 @@ test("/index.html is templated, not served from disk", async () => {
   // theme script the placeholder exists to bless.
   const body = await (await app.request("/index.html")).text();
   expect(body).not.toContain("__CSP_NONCE__");
+  // Both ends of the replaced span. A leftover closing marker would mean the fallback
+  // title survived alongside the injected one.
   expect(body).not.toContain("<!--og-->");
+  expect(body).not.toContain("<!--/og-->");
+  // Closing tags: the comment above the span mentions <title> by name and an opening
+  // tag would count that too.
+  expect(body.match(/<\/title>/g)?.length).toBe(1);
 });
 
 test("a listing name cannot splice the page into its own title", async () => {
@@ -252,6 +260,7 @@ test("a listing name cannot splice the page into its own title", async () => {
   const { listing } = await create({ name: "$`x" });
   const body = await (await app.request(`/l/${listing.id}`)).text();
   expect(body).not.toContain("<!--og-->");
+  expect(body).not.toContain("<!--/og-->");
   expect(body.match(/<!doctype/gi)?.length ?? 0).toBe(1);
 });
 
@@ -278,4 +287,96 @@ test("the outbound hop is rate limited", async () => {
     last = (await app.request(`/r/${listing.id}`, {}, env)).status;
   }
   expect(last).toBe(429);
+});
+
+// --- crawler surface -----------------------------------------------------------------
+//
+// Everything here is invisible in a browser and decides what a search engine does with
+// the site, which is exactly the combination that rots without tests.
+
+/** Mines a listing onto the board the way the pool does, so a test that needs a visible
+ *  listing gets one through the real gate rather than an UPDATE behind it. */
+function makeVisible(id: string) {
+  creditShares([[id, { shares: config.board.visibilityThreshold, diffSum: 5 }]]);
+}
+
+test("a written page gets its own title, description and canonical", async () => {
+  const body = await (await app.request("/about")).text();
+  // Not the home page's. index.html carries that one, and before this the four written
+  // pages went out as four copies of it.
+  expect(body).toContain("<title>What this is — outmine</title>");
+  expect(body).toContain('<link rel="canonical" href="http://localhost/about" />');
+  expect(body).not.toContain("<title>outmine — the board you pay for with CPU</title>");
+});
+
+test("/index.html and a trailing slash canonicalise to the page itself", async () => {
+  const index = await (await app.request("/index.html")).text();
+  expect(index).toContain('<link rel="canonical" href="http://localhost/" />');
+
+  const slashed = await app.request("/about/");
+  expect(slashed.status).toBe(200);
+  expect(await slashed.text()).toContain('<link rel="canonical" href="http://localhost/about" />');
+});
+
+test("a path that is not a page is a 404, not a copy of the board", async () => {
+  const res = await app.request("/wp-admin");
+  expect(res.status).toBe(404);
+  const body = await res.text();
+  expect(body).toContain('<meta name="robots" content="noindex, follow" />');
+  // A 404 that named a canonical would be asking to be indexed under it.
+  expect(body).not.toContain('rel="canonical"');
+});
+
+test("a listing that does not exist is a 404 with tags, not a bare marker", async () => {
+  const res = await app.request("/l/nosuchlisting");
+  expect(res.status).toBe(404);
+  const body = await res.text();
+  // This used to fall through the ternary and ship the marker itself, so the one page
+  // most in need of a noindex was the only page with no crawler tags at all.
+  expect(body).not.toContain("<!--og-->");
+  expect(body).toContain('<meta name="robots" content="noindex, follow" />');
+});
+
+test("a listing short of the gate is noindex; one on the board is canonical", async () => {
+  const { listing } = await create({ name: "Queued Thing" });
+  const pending = await (await app.request(`/l/${listing.id}`)).text();
+  expect(pending).toContain('<meta name="robots" content="noindex, follow" />');
+  expect(pending).not.toContain('rel="canonical"');
+
+  makeVisible(listing.id);
+  const onBoard = await (await app.request(`/l/${listing.id}`)).text();
+  expect(onBoard).toContain(`<link rel="canonical" href="http://localhost/l/${listing.id}" />`);
+  expect(onBoard).not.toContain('name="robots"');
+});
+
+test("the sitemap lists the written pages and the board, never the queue", async () => {
+  const { listing: queued } = await create({ name: "Still Queued" });
+  const { listing: mined } = await create({ name: "On The Board" });
+  makeVisible(mined.id);
+
+  const res = await app.request("/sitemap.xml");
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("application/xml");
+
+  const xml = await res.text();
+  expect(xml).toContain("<loc>http://localhost/</loc>");
+  expect(xml).toContain("<loc>http://localhost/about</loc>");
+  expect(xml).toContain(`<loc>http://localhost/l/${mined.id}</loc>`);
+  // The queue is thin content by design - a name and a progress bar - and its own page
+  // says noindex. A sitemap that listed it would be arguing with that.
+  expect(xml).not.toContain(queued.id);
+});
+
+test("robots.txt carries an absolute sitemap URL", async () => {
+  // The line cannot live in the file: it has to be absolute and the build has no idea
+  // what host it will be served from.
+  const body = await (await app.request("/robots.txt")).text();
+  expect(body).toContain("Sitemap: http://localhost/sitemap.xml");
+});
+
+test("the card tags declare the size the card is actually drawn at", async () => {
+  const body = await (await app.request("/")).text();
+  expect(body).toContain(`<meta property="og:image:width" content="${CARD_WIDTH}" />`);
+  expect(body).toContain(`<meta property="og:image:height" content="${CARD_HEIGHT}" />`);
+  expect(body).toContain('<meta property="og:image" content="http://localhost/og/home.png" />');
 });

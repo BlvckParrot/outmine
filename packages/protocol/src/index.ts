@@ -152,6 +152,86 @@ export type StatsResponse = {
   poolConnections: number;
 };
 
+/** Every path the app answers on, and what each one is. Three jobs from one table:
+ *  the server stitches the title and description into index.html for a crawler, the
+ *  client sets the title again once the router has moved, and a path that is not here
+ *  and is not a listing is a 404 rather than a silent copy of the board.
+ *
+ *  Written once for the same reason as the types above. A title that lived in the
+ *  server and a title that lived in the client would drift, and the drift would show
+ *  as a tab and a search result that disagree about what the page is. */
+/** What every page is called and what it says it is - in the tab, in the head, and in
+ *  a search result. */
+export type PageMeta = { title: string; description: string };
+
+export const PAGES = {
+  "/": {
+    title: "outmine — the board you pay for with CPU",
+    description:
+      "A public leaderboard where rank is bought with browser mining instead of money.",
+  },
+  "/about": {
+    title: "What this is — outmine",
+    description:
+      "A leaderboard whose currency is your CPU: pick a listing, your browser mines for it, and every accepted share moves it up.",
+  },
+  "/rules": {
+    title: "Rules — outmine",
+    description:
+      "What mining on your machine costs you, what you may list, how rank is decided, and how to get a listing taken down.",
+  },
+  "/faq": {
+    title: "Questions — outmine",
+    description:
+      "Why this is not cryptojacking, what a visitor actually mines, who the proceeds go to, and whether the board can be cheated.",
+  },
+  "/stats": {
+    title: "Numbers — outmine",
+    description:
+      "Every share, point and outbound click this site has spent of other people's CPU, in public and live.",
+  },
+} as const satisfies Record<string, PageMeta>;
+
+export type PagePath = keyof typeof PAGES;
+
+/** /index.html and /about/ are the same page as / and /about. The server resolves them
+ *  with a canonical rather than a redirect - both are already answered correctly, and a
+ *  canonical costs the visitor no round trip - and the client has to agree, or a typed
+ *  /about/ renders "not found" over a page the server just said was fine. */
+export function normalizePath(path: string): string {
+  if (path === "/index.html") return "/";
+  return path.replace(/\/+$/, "") || "/";
+}
+
+/** Deliberately not in PAGES: this is what a path that is *not* a page is called, and
+ *  putting it in the table would put it in the sitemap and make it a page. */
+export const NOT_FOUND_PAGE: PageMeta = {
+  title: "Not found — outmine",
+  description: "No page at this address.",
+};
+
+/** `in` would answer true for "toString" and hand a prototype method to whatever asked
+ *  for a page. Takes the raw pathname and normalises it, so no caller has to remember. */
+export const isPagePath = (path: string): boolean => Object.hasOwn(PAGES, normalizePath(path));
+
+/** The listing pages, the one dynamic shape. Matches newListingId's alphabet. */
+export const isListingPath = (path: string) => /^\/l\/[a-z0-9]+$/i.test(path);
+
+/** Whether a path is anything at all. The server's catch-all answers every URL ever
+ *  typed at the host, so without this every typo is a second indexable copy of the
+ *  board - and the client would render one. */
+export const isKnownPath = (path: string) => isPagePath(path) || isListingPath(path);
+
+/** The title and description for a path, normalised, with the not-found pair for
+ *  anything that is not a page.
+ *
+ *  The index signature is the point: PAGES' own type says every key is present, so
+ *  indexing it directly types the ?? below as dead code and the return type as one that
+ *  can never be the not-found pair - which is exactly what this returns for every path
+ *  that is not a page. */
+export const pageFor = (path: string): PageMeta =>
+  (PAGES as Record<string, PageMeta | undefined>)[normalizePath(path)] ?? NOT_FOUND_PAGE;
+
 /** GET /api/listings/:id. Carries `rank` because the client cannot work it out: it
  *  only ever holds one page of the board. */
 export type ListingDetail = {

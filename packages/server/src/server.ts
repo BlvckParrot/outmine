@@ -71,8 +71,8 @@ startLoops(server);
  *  a read and a hash of the whole body on every request, in the same loop that
  *  broadcasts the board.
  *
- *  index.html is deliberately left out: it goes through Hono, which stitches in the
- *  crawler tags and the CSP nonce. Everything else in dist is content-hashed or
+ *  index.html and robots.txt are deliberately left out: both go through Hono, which is
+ *  the only layer that knows the host. Everything else in dist is content-hashed or
  *  immutable by nature.
  *
  *  Read once at startup, so a new build needs a restart - which is what deploying one
@@ -91,7 +91,10 @@ function staticRoutes(): Record<string, Bun.BunFile | { dir: string }> {
   }
 
   for (const entry of entries) {
-    if (entry.name === "index.html") continue;
+    // Both are rewritten per request and have to reach Hono: index.html has its head
+    // stitched in and its nonce filled, robots.txt has a Sitemap: line appended. Only
+    // Hono knows the host, and both need it.
+    if (entry.name === "index.html" || entry.name === "robots.txt") continue;
     const path = `${config.webDist}/${entry.name}`;
     if (entry.isDirectory()) routes[`/${entry.name}/*`] = { dir: path };
     else if (entry.isFile()) routes[`/${entry.name}`] = Bun.file(path);

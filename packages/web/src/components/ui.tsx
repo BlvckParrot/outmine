@@ -49,7 +49,18 @@ export const Avatar = ({ entry, size = "md", dim }: {
   >
     {entry.has_icon ? (
       // Decorative: the name is right next to it in every place this is used.
-      <img src={apiUrl(`/icon/${entry.id}.png`)} alt="" className="size-full object-cover" />
+      //
+      // No width/height needed - the span above is sized by AVATAR_SIZE, so the box is
+      // reserved whether or not the icon ever arrives and nothing shifts when it does.
+      // lazy/async are for the board, which is fifty of these: without them fifty icon
+      // requests and fifty decodes compete with the first render.
+      <img
+        src={apiUrl(`/icon/${entry.id}.png`)}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className="size-full object-cover"
+      />
     ) : (
       entry.name[0]?.toUpperCase()
     )}

@@ -1,3 +1,10 @@
+# One hostname, or the same board indexes twice and the two copies split whatever
+# ranking either would have had on its own. Permanent, so it is the apex that
+# accumulates it. Harmless when SITE_ADDRESS is localhost - nothing resolves www.localhost.
+www.{$SITE_ADDRESS:localhost} {
+	redir https://{$SITE_ADDRESS:localhost}{uri} permanent
+}
+
 # Replace with your domain; Caddy then gets a certificate on its own.
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip
@@ -12,10 +19,13 @@
 
 	# Everything Bun answers from its native routes - see staticRoutes in server.ts -
 	# skips Hono, and therefore skips the app's secureHeaders. That is every file at the
-	# root of dist as well as the two directories: the WASM miner, its glue, the favicon
-	# and robots.txt. nosniff has to come from here for all of them, and it matters most
-	# for the one the CSP's script-src 'self' would otherwise be asked to vouch for.
-	@static path /assets/* /fonts/* /mine-* /favicon.svg /robots.txt
+	# root of dist as well as the two directories: the WASM miner, its glue and the
+	# favicon. nosniff has to come from here for all of them, and it matters most for
+	# the one the CSP's script-src 'self' would otherwise be asked to vouch for.
+	#
+	# robots.txt is not here any more: it goes through Hono so the server can append an
+	# absolute Sitemap: line, which means it already gets secureHeaders.
+	@static path /assets/* /fonts/* /mine-* /favicon.svg
 	header @static X-Content-Type-Options "nosniff"
 
 	# The frontend build is content-hashed by Vite, so a file at one of these paths never

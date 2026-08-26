@@ -67,8 +67,10 @@ export function badgeSvg(listing: Pick<ListingDetail, "rank" | "score">): string
 
 // --- share card ---------------------------------------------------------------------
 
-const CARD_WIDTH = 1200;
-const CARD_HEIGHT = 630;
+/** Exported so the og:image:width/height tags in share.ts quote the size the card is
+ *  actually drawn at rather than a copy of it that can go stale. */
+export const CARD_WIDTH = 1200;
+export const CARD_HEIGHT = 630;
 
 export function cardSvg(listing: ListingDetail): string {
   const name = escapeXml(truncate(listing.name, 26));
