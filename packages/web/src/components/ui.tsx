@@ -55,7 +55,7 @@ export const Avatar = ({ entry, size = "md", dim }: {
       // lazy/async are for the board, which is fifty of these: without them fifty icon
       // requests and fifty decodes compete with the first render.
       <img
-        src={apiUrl(`/icon/${entry.id}.png`)}
+        src={apiUrl(`/icon/${entry.id}.webp`)}
         alt=""
         loading="lazy"
         decoding="async"

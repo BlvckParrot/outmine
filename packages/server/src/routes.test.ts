@@ -5,6 +5,7 @@
 import { expect, test } from "bun:test";
 import { CARD_HEIGHT, CARD_WIDTH } from "./cards";
 import { config } from "./config";
+import { db } from "./db";
 import { creditShares } from "./listings";
 import { app } from "./routes";
 
@@ -26,6 +27,14 @@ const post = (body: unknown, env = from()) =>
     { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
     env,
   );
+
+/** The smallest real PNG there is, for the routes that need actual image bytes. */
+const PNG_1X1 = new Uint8Array(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+);
 
 /** A listing plus the token it was created with, for the owner-only routes. */
 async function create(overrides: Record<string, unknown> = {}) {
@@ -189,6 +198,39 @@ test("an icon is gated on points, not only on the token", async () => {
 test("an icon that was never uploaded is a 404", async () => {
   const { listing } = await create();
   expect((await app.request(`/icon/${listing.id}.png`)).status).toBe(404);
+});
+
+test("an uploaded icon comes back as a webp", async () => {
+  const { listing, editToken } = await create();
+  makeVisible(listing.id); // the same credit that unlocks the icon
+
+  // Copied into a plain ArrayBuffer: bytes() hands back a view whose buffer type is
+  // wider than BodyInit accepts.
+  const png = new Uint8Array(
+    await new Bun.Image(PNG_1X1).resize(64, 64, { fit: "fill" }).png().bytes(),
+  );
+  const put = await app.request(`/api/listings/${listing.id}/icon`, {
+    method: "PUT",
+    headers: { "x-edit-token": editToken },
+    body: png,
+  });
+  expect(put.status).toBe(200);
+
+  const res = await app.request(`/icon/${listing.id}.webp`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("image/webp");
+  expect((await new Bun.Image(await res.bytes()).metadata()).format).toBe("webp");
+});
+
+test("an icon stored before the switch to webp is still served as a png", async () => {
+  const { listing } = await create();
+  // Written straight into the column: this is the shape every row uploaded before the
+  // switch already has, and the read side has to keep telling the truth about it.
+  db.query(`UPDATE listings SET icon = ? WHERE id = ?`).run(PNG_1X1, listing.id);
+
+  const res = await app.request(`/icon/${listing.id}.png`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("image/png");
 });
 
 // --- the rest ----------------------------------------------------------------------

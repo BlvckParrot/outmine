@@ -289,7 +289,7 @@ app.put("/api/listings/:id/icon", readLimit, boundedBody(config.limits.maxIconBy
 
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   try {
-    const listing = setIcon(c.req.param("id"), token, bytes);
+    const listing = await setIcon(c.req.param("id"), token, bytes);
     log("listing_icon_set", { id: listing.id, bytes: bytes.length });
     return c.json({ ok: true });
   } catch (err) {
@@ -334,10 +334,13 @@ app.get("/api/listings/:id", (c) => {
  *  the board, and it breaks the moment that host does. */
 app.use("/icon/*", etag());
 
-app.get("/icon/:id{.+\\.png}", (c) => {
-  const icon = getIcon(c.req.param("id").replace(/\.png$/, ""));
+app.get("/icon/:id{.+\\.(?:png|webp)}", (c) => {
+  const icon = getIcon(c.req.param("id").replace(/\.(?:png|webp)$/, ""));
   if (!icon) return c.notFound();
-  c.header("Content-Type", "image/png");
+  // Sniffed rather than assumed: 0x52 is the R of RIFF, which only WebP starts with.
+  // Icons uploaded before the switch to WebP are still PNG blobs in the same column,
+  // and both extensions stay routable so a URL already in a cache keeps working.
+  c.header("Content-Type", icon[0] === 0x52 ? "image/webp" : "image/png");
   // The URL does not change when the owner replaces the image, so a max-age would be
   // exactly how long a stale icon survives. Revalidating instead costs a request and
   // answers 304 with no body, and the replacement is visible immediately.

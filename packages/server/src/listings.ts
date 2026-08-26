@@ -166,42 +166,60 @@ const text = (value: unknown, field: string): string => {
   return value;
 };
 
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const IHDR = 0x49484452;
-
-/** PNG only, judged by its bytes rather than by the Content-Type the uploader chose.
+/** Decoded and re-encoded rather than inspected, so the bytes that reach the row are the
+ *  ones our own encoder wrote. Nothing rides along in an ancillary chunk, and a file that
+ *  only looks like an image from its header no longer gets served from our own origin.
  *
- *  The browser re-draws whatever was picked onto a canvas and sends the result, so for
- *  an ordinary visitor this only ever checks our own encoder. It is written as a wall
- *  because the endpoint is reachable with curl: SVG in particular is refused, since it
- *  is a document with scripts in it and this one would be served from our own origin. */
-export function checkedIcon(bytes: Uint8Array): Uint8Array {
+ *  Any raster format Bun reads is taken and normalised. SVG is not one of them, which is
+ *  the point: it is a document with scripts in it and this one would be same-origin.
+ *
+ *  maxPixels is the decompression-bomb guard and is checked before the decode, so a few
+ *  hundred bytes on the wire cannot ask for gigabytes of pixels.
+ *
+ *  Both WebP encoders run because neither wins twice. A flat logo - the common case -
+ *  goes to a third of PNG losslessly, and lossy would only fray its edges. A photograph
+ *  goes the other way: lossless barely beats PNG, quality 90 is six times smaller. */
+export async function checkedIcon(bytes: Uint8Array): Promise<Uint8Array> {
   if (bytes.length > config.limits.maxIconBytes) throw new TargetError("icon too large");
-  if (bytes.length < 24 || PNG_SIGNATURE.some((byte, i) => bytes[i] !== byte)) {
-    throw new TargetError("icon must be a png");
-  }
 
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // A PNG's first chunk is always IHDR: 4 bytes of length, 4 of type, then the size.
-  if (view.getUint32(12) !== IHDR) throw new TargetError("icon must be a png");
+  // One Image per encoder rather than one pipeline used twice: the pipeline is mutable,
+  // and sharing it makes the second webp() hand back the first one's bytes without an
+  // error, which turns the comparison below into a coin flip.
+  const fitted = () =>
+    new Bun.Image(bytes, { maxPixels: ICON_MAX_PX ** 2 })
+      .resize(ICON_MAX_PX, ICON_MAX_PX, { fit: "inside", withoutEnlargement: true });
 
-  const width = view.getUint32(16);
-  const height = view.getUint32(20);
-  if (width < 1 || height < 1 || width > ICON_MAX_PX || height > ICON_MAX_PX) {
-    throw new TargetError(`icon must be at most ${ICON_MAX_PX}x${ICON_MAX_PX}`);
+  let lossless: Uint8Array;
+  let lossy: Uint8Array;
+  try {
+    [lossless, lossy] = await Promise.all([
+      fitted().webp({ lossless: true }).bytes(),
+      fitted().webp({ quality: 90 }).bytes(),
+    ]);
+  } catch {
+    // Names the formats the picker offers rather than everything Bun happens to read:
+    // this line is the only feedback someone uploading an SVG by hand ever gets.
+    throw new TargetError(
+      `icon must be a png, jpeg, webp or gif of at most ${ICON_MAX_PX}x${ICON_MAX_PX}`,
+    );
   }
-  return bytes;
+  return lossless.length <= lossy.length ? lossless : lossy;
 }
 
 /** Replaces a listing's icon. Gated on points as well as on the token: the token only
  *  says whose listing it is, and an icon is the loudest thing on a row. */
-export function setIcon(id: string, editToken: string, bytes: Uint8Array): Listing {
+export async function setIcon(
+  id: string,
+  editToken: string,
+  bytes: Uint8Array,
+): Promise<Listing> {
   const listing = owned(id, editToken);
   if (listing.score * POINT_SCALE < config.board.iconMinPoints) {
     throw new TargetError(`an icon unlocks at ${config.board.iconMinPoints} points`);
   }
 
-  db.query(`UPDATE listings SET icon = ? WHERE id = ?`).run(checkedIcon(bytes), id);
+  const icon = await checkedIcon(bytes);
+  db.query(`UPDATE listings SET icon = ? WHERE id = ?`).run(icon, id);
   return getListing(id)!;
 }
 
