@@ -43,26 +43,6 @@ anything is mining afterwards.
 While it runs there is a thread count and a throttle, both movable mid-run, and a stop
 button. Mining only happens while the tab is open.
 
-Visitors are counted with one message on the socket that is already open — no cookies, no
-third-party scripts, no pixel. Referrers are kept as hosts, never full URLs.
-
-**The hashrate column is measured. The rate column is not.** RinHash runs 15.6x faster in a
-browser because its Argon2d touches 64 KiB where yespower touches 2 MiB — that much is ours
-to verify, and on its own it is reason enough to prefer it. The rate is zpool's own
-advertisement and it does not survive a sanity check: 0.00485 BTC per MH/s per day is $372 a
-day for one megahash, which would have every CPU on earth pointed at this coin by tomorrow.
-The pool has fifty miners on it.
-
-What *is* measured end to end, by watching the payout address across a run: MinotaurX at
-3.1 kH/s for three minutes credited 9.5e-11 BTC — a tenth of what that table predicts.
-`scripts/measure-yield.ts` settles it properly, mining for a couple of hours and dividing
-the credited BTC by the hashes that earned it. Run it before believing any ratio, this one
-included.
-
-Browser mining pays little either way; that is the honest baseline. The leaderboard is what
-makes any of it worth anything — a normal page gets a 30-second visit, a board people
-compete on gets a tab left open for hours.
-
 ## Licence
 
 [GPL-2.0](LICENSE), for the whole repository.
