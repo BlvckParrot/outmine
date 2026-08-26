@@ -1,5 +1,10 @@
 // Point-in-time copy of the SQLite file, safe to run while the server is writing.
-// Usage: bun scripts/backup.ts [outDir]   (cron suggestion is in the README)
+// Usage: bun scripts/backup.ts [outDir]
+//
+// The server already runs this on BACKUP_CRON (see startBackupJob in server.ts) and
+// passes both paths absolute; run it by hand for a snapshot before a migration or a
+// risky DELETE. By hand, DB_PATH and outDir are relative to the working directory, so
+// run it from the repo root.
 import { Database } from "bun:sqlite";
 import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";

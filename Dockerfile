@@ -39,9 +39,10 @@ COPY packages/web/package.json ./packages/web/
 RUN bun install --production --frozen-lockfile
 COPY packages/protocol ./packages/protocol
 COPY packages/server ./packages/server
-# scripts/backup.ts runs inside this container - README documents it as a cron line
-# through `docker compose exec`. Without this the path does not exist and the nightly
-# backup has never once succeeded.
+# scripts/backup.ts runs inside this container, spawned by the server itself on
+# BACKUP_CRON. Without this COPY the path does not exist and the nightly backup fails
+# every night with ENOENT - which is exactly what happened while it was a crontab line
+# on the host that only the README knew about.
 COPY scripts ./scripts
 # Laid out as in the repo so the server's default WEB_DIST (../../web/dist relative to
 # its own source) resolves without configuration.

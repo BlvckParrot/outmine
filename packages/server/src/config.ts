@@ -69,6 +69,20 @@ export const config = {
    *  directory, so it names one database however the server was launched. */
   dbPath: rootRelative(str("DB_PATH", "data/outmine.sqlite")),
 
+  /** When the nightly snapshot runs, as a cron expression in the machine's local time -
+   *  UTC in the image. Empty disables the backup entirely.
+   *
+   *  The server runs it itself rather than the host's crontab: the crontab line existed
+   *  only in the README, the README lost it, and a backup nobody is running is worse
+   *  than one that was never written. Minute resolution is all Bun.cron offers and all
+   *  this needs; the loops in hub.ts stay on setInterval because they are seconds. */
+  backupCron: process.env.BACKUP_CRON?.trim() ?? "0 4 * * *",
+
+  /** Where snapshots land. Root-relative for the same reason as dbPath, and a separate
+   *  directory from it on purpose - the image and compose file mount the two apart so a
+   *  backup can live on another disk. */
+  backupDir: rootRelative("backups"),
+
   /** Absolute origin this site is reached at, e.g. https://outmine.example.
    *
    *  Only needed for the tags a crawler reads: og:image and og:url have to be
@@ -244,6 +258,26 @@ export const config = {
     trustedProxies: int("TRUSTED_PROXIES", 0, { min: 0, max: 10 }),
   },
 } as const;
+
+// A typo here is silent for as long as it takes to need a backup, so it is a startup
+// failure rather than a job that quietly never fires.
+//
+// Both outcomes have to be caught: Bun.cron.parse throws on a malformed expression and
+// returns null for a well-formed one with no match in the next eight years, like 31
+// February. Left to throw it would take the process down at import time, from a module
+// whose entire job is to collect problems and report them together.
+if (config.backupCron) {
+  try {
+    if (!Bun.cron.parse(config.backupCron)) {
+      problems.push(
+        `BACKUP_CRON never comes round: ${JSON.stringify(config.backupCron)} has no match` +
+          ` in the next eight years. Set it empty to disable backups.`,
+      );
+    }
+  } catch (err) {
+    problems.push(`BACKUP_CRON is not a cron expression: ${String(err)}`);
+  }
+}
 
 // A host named for one algorithm with POOL_ALGO set to another is the single mistake
 // that costs everything and reports nothing: the pool takes the connection, hands out

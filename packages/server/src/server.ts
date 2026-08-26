@@ -64,6 +64,44 @@ const server = Bun.serve<SocketData, string>({
 // After the server exists, because the broadcast publishes through it.
 startLoops(server);
 
+startBackupJob();
+
+/** The nightly SQLite snapshot, on BACKUP_CRON.
+ *
+ *  In a subprocess rather than inline: VACUUM INTO is synchronous and everything here
+ *  shares one thread, so a backup on the event loop would hold up the broadcast for as
+ *  long as the copy takes. Both paths it needs are passed explicitly - the script
+ *  resolves its own defaults against the working directory, and the server's are
+ *  resolved against the repo root, which are the same place only when the process was
+ *  started from there. */
+function startBackupJob() {
+  if (!config.backupCron) return;
+  const script = new URL("../../../scripts/backup.ts", import.meta.url).pathname;
+
+  Bun.cron(config.backupCron, async () => {
+    // Nothing in here may throw. Bun.cron hands a handler's error to
+    // uncaughtException, and the handler below exits the process - so a full disk
+    // during a backup would take the site down with it.
+    try {
+      const proc = Bun.spawn([process.execPath, script, config.backupDir], {
+        env: { ...process.env, DB_PATH: config.dbPath },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      log(code === 0 ? "backup_done" : "backup_failed", { code, out: out.trim(), err: err.trim() });
+    } catch (err) {
+      log("backup_failed", { error: String(err) });
+    }
+  }).unref(); // a pending backup is never the reason the process stays alive
+
+  log("backup_scheduled", { cron: config.backupCron, next: Bun.cron.parse(config.backupCron) });
+}
+
 /** The built frontend, served by Bun itself.
  *
  *  A `dir` route streams with sendfile and answers Content-Type, ETag, Last-Modified,
