@@ -28,3 +28,9 @@ process.env.DB_PATH = path;
 // markers and all, and it is in the repository, so the test means the same thing in
 // CI as it does after a local build.
 process.env.WEB_DIST ||= new URL("../packages/web", import.meta.url).pathname;
+
+// An empty BLOCKED_WORDS is the off switch, and a local .env copied from an older
+// .env.example carries exactly that - which bun loads automatically, silently turning
+// off the check security.test.ts is asserting. Unset here so the suite tests the
+// built-in list on every machine, .env or not.
+delete process.env.BLOCKED_WORDS;

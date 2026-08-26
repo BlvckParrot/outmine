@@ -43,9 +43,15 @@ function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: 
   return raw as T;
 }
 
-function list(name: string, fallback: readonly string[] = []): string[] {
-  const values = (process.env[name] ?? "").split(",").map((v) => v.trim()).filter(Boolean);
-  return values.length > 0 ? values : [...fallback];
+/** Unset takes the fallback; set-but-empty means an empty list.
+ *
+ *  Exported for its own test. The distinction is the whole point: treating an empty
+ *  value as "no value" left a defaulted list with no off switch at all, since every
+ *  other value is just a different list. */
+export function list(name: string, fallback: readonly string[] = []): string[] {
+  const raw = process.env[name];
+  if (raw === undefined) return [...fallback];
+  return raw.split(",").map((v) => v.trim()).filter(Boolean);
 }
 
 /** The category /rules names first. A setting rather than a list baked into the source:
@@ -241,9 +247,10 @@ export const config = {
     /** Enables DELETE /api/listings/:id. Empty disables takedowns entirely. */
     adminToken: process.env.ADMIN_TOKEN?.trim() ?? "",
 
-    /** Words refused in a listing's name or tagline, comma separated. Set it to
-     *  replace the default list; there is no way to disable the check short of
-     *  BLOCKED_WORDS=" ", which is deliberate.
+    /** Words refused in a listing's name or tagline, comma separated. Set it to replace
+     *  the default list; leave it unset for that list, and set it empty to turn the
+     *  check off. Which of those a board wants is the operator's policy, so it is a
+     *  setting rather than a deploy - but an unconfigured deployment gets the list.
      *
      *  A name reaches the public board, the share card a crawler renders, and the
      *  <title> of a page people post to X. The admin takedown route is the real remedy
@@ -298,6 +305,13 @@ for (const other of MINER_ALGOS) {
  *  the only caller: importing config from a test must not require a full production
  *  environment, and one bad value should list all of them, not just the first. */
 export function exitIfMisconfigured(): void {
+  // Not a problem - a board may legitimately want no word list - but it is the one
+  // setting whose off position is an empty string, and an .env copied from an older
+  // .env.example carries exactly that. Said out loud so the check is never off by
+  // accident.
+  if (config.security.blockedWords.length === 0) {
+    console.warn("BLOCKED_WORDS is empty: listing names and taglines are not checked.");
+  }
   if (problems.length === 0) return;
   console.error("Configuration is not usable:");
   for (const problem of problems) console.error(`  - ${problem}`);
