@@ -75,6 +75,10 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # HTTP/3. Caddy binds UDP/443 and advertises Alt-Svc: h3 on its own under TLS, so
+      # without this every browser tries QUIC against a port nothing is published on,
+      # fails, and falls back - a wasted round trip per origin to advertise nothing.
+      - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
