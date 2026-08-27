@@ -149,7 +149,9 @@ test("an edit needs the token it was created with", async () => {
   const { listing, editToken } = await create();
 
   expect((await patch(listing.id, { name: "New" })).status).toBe(401);
-  expect((await patch(listing.id, { name: "New" }, "not-the-token")).status).toBe(400);
+  // 401 rather than 400: a wrong token is a refused secret, not a malformed request,
+  // and it is the one that gets an auth_failed line. See AuthError in listings.ts.
+  expect((await patch(listing.id, { name: "New" }, "not-the-token")).status).toBe(401);
 
   const ok = await patch(listing.id, { name: "New Name" }, editToken);
   expect(ok.status).toBe(200);

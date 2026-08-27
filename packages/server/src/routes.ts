@@ -20,11 +20,11 @@ import {
   clientCount, connectionCount, dropListing, loopLag, miningCount, poolHealthy, pushFeed,
 } from "./hub";
 import {
-  boardTotals, countClick, createListing, deleteListing, getIcon, getListing, listingRank,
-  searchBoard, setIcon, TargetError, trafficByDay, trafficListings, trafficTop, trending,
-  updateListing, visitsToday,
+  AuthError, boardTotals, countClick, createListing, deleteListing, getIcon, getListing,
+  listingRank, searchBoard, setIcon, TargetError, trafficByDay, trafficListings, trafficTop,
+  trending, updateListing, visitsToday,
 } from "./listings";
-import { log } from "./log";
+import { log, makeThrottledLog } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
 import { origin, pageMeta, replaceMeta, share, withNonce } from "./share";
 
@@ -32,6 +32,12 @@ import { origin, pageMeta, replaceMeta, share, withNonce } from "./share";
 export type RequestContext = { socketAddress?: string };
 
 export const app = new Hono<{ Bindings: RequestContext }>();
+
+/** For the four events below - a refused origin, a refused rate, a wrong token - which
+ *  all fire once per abusive request and would otherwise bury everything else in the
+ *  log. Same interval as the hub's. Caddy's access log already has the status of every
+ *  request; what these add is the reason, which the edge cannot see. */
+const throttled = makeThrottledLog(30_000);
 
 /** The badge and the share card exist to be loaded by other origins - that is the
  *  entire feature. secureHeaders defaults Cross-Origin-Resource-Policy to same-origin,
@@ -76,7 +82,14 @@ app.use(secureHeaders({
 }));
 
 app.use("/api/*", cors({
-  origin: (origin, c) => (originAllowed(origin, c.req.url) ? origin : null),
+  origin: (origin, c) => {
+    if (originAllowed(origin, c.req.url)) return origin;
+    // The WebSocket twin of this refusal is logged as ws_origin_rejected. Both guard
+    // the same thing - a third-party page spending its visitors' CPUs against this
+    // pool account - so a silent one here was an accident, not a decision.
+    throttled("cors_rejected", { origin });
+    return null;
+  },
   allowHeaders: ["content-type", "x-edit-token", "x-admin-token"],
   allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }));
@@ -167,6 +180,18 @@ app.get("/health", (c) => {
 const byAddress = (c: Context<{ Bindings: RequestContext }>) =>
   clientAddress(c.req.raw.headers, c.env?.socketAddress);
 
+/** A wrong secret: the admin token, or a listing's edit token. Logged rather than only
+ *  answered, because this is the one thing Caddy's access log cannot tell apart - a
+ *  guess against ADMIN_TOKEN and a client bug both leave the same line at the edge.
+ *
+ *  A *missing* token is deliberately not routed through here. It is what a cleared
+ *  localStorage looks like, it happens to honest people, and since the throttle keys on
+ *  the event name that noise would hide the guessing it exists to show. */
+const authFailed = (c: Context<{ Bindings: RequestContext }>, reason: string) => {
+  throttled("auth_failed", { path: c.req.path, reason, address: byAddress(c) });
+  return c.json({ error: reason }, 401);
+};
+
 /** Per-address sliding window. Without it a bot floods the pending list, which is
  *  public and ordered, so a flood pushes the real entries off the end.
  *
@@ -176,7 +201,10 @@ const newListingLimit = rateLimiter<{ Bindings: RequestContext }>({
   windowMs: 60_000,
   limit: config.limits.newListingsPerMinute,
   keyGenerator: byAddress,
-  handler: (c) => c.json({ error: "slow down" }, 429),
+  handler: (c) => {
+    throttled("rate_limited", { path: c.req.path, address: byAddress(c) });
+    return c.json({ error: "slow down" }, 429);
+  },
 });
 
 /** Everything that is not free to answer: rasterising a share card, the outbound hop
@@ -190,7 +218,10 @@ const readLimit = rateLimiter<{ Bindings: RequestContext }>({
   windowMs: 60_000,
   limit: config.limits.expensiveReadsPerMinute,
   keyGenerator: byAddress,
-  handler: (c) => c.json({ error: "slow down" }, 429),
+  handler: (c) => {
+    throttled("rate_limited", { path: c.req.path, address: byAddress(c) });
+    return c.json({ error: "slow down" }, 429);
+  },
 });
 
 // --- the board ---------------------------------------------------------------------
@@ -271,6 +302,9 @@ app.patch("/api/listings/:id", readLimit, boundedBody(config.limits.maxBodyBytes
   try {
     return c.json(updateListing(c.req.param("id"), token, c.req.valid("json")));
   } catch (err) {
+    // AuthError first: it extends TargetError, so the order is what decides whether a
+    // guessed token is answered as 401 and logged or as an unremarkable 400.
+    if (err instanceof AuthError) return authFailed(c, err.message);
     if (err instanceof TargetError) return c.json({ error: err.message }, 400);
     throw err;
   }
@@ -293,6 +327,7 @@ app.put("/api/listings/:id/icon", readLimit, boundedBody(config.limits.maxIconBy
     log("listing_icon_set", { id: listing.id, bytes: bytes.length });
     return c.json({ ok: true });
   } catch (err) {
+    if (err instanceof AuthError) return authFailed(c, err.message);
     if (err instanceof TargetError) return c.json({ error: err.message }, 400);
     throw err;
   }
@@ -303,7 +338,7 @@ app.put("/api/listings/:id/icon", readLimit, boundedBody(config.limits.maxIconBy
 app.delete("/api/listings/:id", readLimit, (c) => {
   const offered = c.req.header("x-admin-token") ?? "";
   if (!config.security.adminToken || !secretsMatch(config.security.adminToken, offered)) {
-    return c.json({ error: "unauthorized" }, 401);
+    return authFailed(c, "unauthorized");
   }
 
   const id = c.req.param("id");
@@ -374,7 +409,7 @@ app.get("/r/:id", readLimit, (c) => {
 app.get("/admin/traffic", readLimit, (c) => {
   const offered = new URL(c.req.url).searchParams.get("token") ?? "";
   if (!config.security.adminToken || !secretsMatch(config.security.adminToken, offered)) {
-    return c.json({ error: "unauthorized" }, 401);
+    return authFailed(c, "unauthorized");
   }
 
   c.header("X-Robots-Tag", "noindex, nofollow");

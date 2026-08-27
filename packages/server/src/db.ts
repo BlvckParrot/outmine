@@ -4,9 +4,25 @@ import { dirname } from "node:path";
 import { config } from "./config";
 import { log } from "./log";
 
-mkdirSync(dirname(config.dbPath), { recursive: true });
+export const db = openDatabase();
 
-export const db = new Database(config.dbPath, { create: true });
+/** Opens the database, or says why it could not and stops.
+ *
+ *  This runs at import time, reached through server.ts's `import ... from "./hub"` -
+ *  which is before exitIfMisconfigured() and before the uncaughtException handler at
+ *  the bottom of server.ts exists. So the one failure the compose file warns about, a
+ *  root-owned ./data bind mount, used to be the only one that exited with a raw stack
+ *  trace and no JSON line to find in `docker logs`. */
+function openDatabase(): Database {
+  try {
+    mkdirSync(dirname(config.dbPath), { recursive: true });
+    return new Database(config.dbPath, { create: true });
+  } catch (err) {
+    log("db_open_failed", { path: config.dbPath, error: String(err) });
+    process.exit(1);
+  }
+}
+
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA busy_timeout = 5000");
 // Off by default, and per connection. Without it the ON DELETE CASCADE in schema.sql is

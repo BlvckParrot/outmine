@@ -19,6 +19,12 @@ const PUBLIC_COLUMNS =
 
 export class TargetError extends Error {}
 
+/** A wrong secret, as opposed to a malformed request. A subclass so every existing
+ *  `instanceof TargetError` catch still holds; routes.ts checks for this one first, to
+ *  answer 401 rather than 400 and to log it. Guessing an edit token used to be
+ *  indistinguishable from a typo in a name, in the response and in the access log. */
+export class AuthError extends TargetError {}
+
 export function normalizeTarget(kind: "domain" | "handle", raw: string): string {
   const input = raw.trim();
   if (!input) throw new TargetError("empty target");
@@ -132,7 +138,7 @@ function owned(id: string, editToken: string): Listing {
     .query<{ edit_token_hash: string }, [string]>(`SELECT edit_token_hash FROM listings WHERE id = ?`)
     .get(id);
   if (!row) throw new TargetError("no such listing");
-  if (!secretsMatch(row.edit_token_hash, hashToken(editToken))) throw new TargetError("bad edit token");
+  if (!secretsMatch(row.edit_token_hash, hashToken(editToken))) throw new AuthError("bad edit token");
   return getListing(id)!;
 }
 
