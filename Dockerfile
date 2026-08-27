@@ -55,5 +55,8 @@ COPY --from=web /app/packages/web/dist ./packages/web/dist
 RUN mkdir -p data backups && chown bun:bun data backups
 USER bun
 
+# Documentation, not a binding: on a user-defined bridge network every port is already
+# reachable between containers. PORT is what actually moves the server - see config.ts,
+# and docker-compose.yml, which hands the same value to Caddy.
 EXPOSE 3000
 CMD ["bun", "packages/server/src/server.ts"]

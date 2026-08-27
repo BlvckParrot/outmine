@@ -42,10 +42,13 @@ services:
       # Separate from ./data on purpose. Point this at another disk - or rsync it off
       # the host - and the backups survive something the database does not.
       - ./backups:/app/backups
+    # Both follow PORT, which is read from the same .env the app gets through env_file
+    # above. Pinned separately they were a third and fourth copy of the number, so
+    # moving the app broke the healthcheck and Caddy's upstream at the same time.
     expose:
-      - "3000"
+      - "${PORT:-3000}"
     healthcheck:
-      test: ["CMD", "bun", "-e", "process.exit(await fetch('http://localhost:3000/health').then(r => r.ok ? 0 : 1).catch(() => 1))"]
+      test: ["CMD", "bun", "-e", "process.exit(await fetch('http://localhost:${PORT:-3000}/health').then(r => r.ok ? 0 : 1).catch(() => 1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -66,6 +69,9 @@ services:
     # none of which it has any use for.
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+      # The app's port, for the reverse_proxy upstream in the Caddyfile - not Caddy's
+      # own, which is 80/443 below. Same default as config.ts, so an unset PORT works.
+      PORT: ${PORT:-3000}
     ports:
       - "80:80"
       - "443:443"

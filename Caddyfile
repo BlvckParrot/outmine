@@ -36,5 +36,10 @@ www.{$SITE_ADDRESS:localhost} {
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
 
 	# WebSockets need no special config in Caddy 2 - reverse_proxy upgrades them.
-	reverse_proxy app:3000
+	#
+	# PORT is the app's, not Caddy's: docker-compose.yml passes the same value to both
+	# containers, so moving the app is one edit in .env rather than four that have to
+	# agree. Caddy substitutes {$PORT} textually before parsing, so it is as valid here
+	# as in a site address.
+	reverse_proxy app:{$PORT:3000}
 }
