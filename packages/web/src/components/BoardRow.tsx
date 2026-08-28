@@ -1,6 +1,6 @@
 import type { BoardEntry } from "@outmine/protocol";
 import { apiUrl } from "../api";
-import { ago, fmt, points } from "../format";
+import { ago, fmt, plural, points } from "../format";
 import { linkProps } from "../router";
 import { Avatar } from "./ui";
 
@@ -74,7 +74,7 @@ export function BoardRow(props: {
                 · {entry.miners} mining · {fmt(entry.hashrate)} H/s
               </span>
             )}
-            <span>· {entry.clicks} clicks</span>
+            <span>· {plural(entry.clicks, "click")}</span>
           </p>
         </div>
 

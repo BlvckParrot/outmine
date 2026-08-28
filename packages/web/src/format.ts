@@ -11,6 +11,10 @@ const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "always" });
 const SECOND = [1_000, "second"] as const;
 const UNITS = [[86_400_000, "day"], [3_600_000, "hour"], [60_000, "minute"], SECOND] as const;
 
+/** "1 click", "2 clicks". Board rows print counts that spend most of their life at 1,
+ *  and "1 clicks" on every fresh listing is the first thing a reader sees. */
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 /** "20 hours ago". A listing's age says whether the top of the board is settled or
  *  still moving, which a timestamp does not. */
 export function ago(at: number): string {

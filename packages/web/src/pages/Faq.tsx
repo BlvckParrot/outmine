@@ -14,16 +14,16 @@ export function Faq() {
 
       <h2>How much will I actually mine?</h2>
       <p>
-        A modern laptop manages a few hundred hashes a second per thread. In money that is a
-        fraction of a cent an hour, which is exactly why this works as a game and would not work as
-        a business. The point is the leaderboard, not the payout.
+        A modern laptop manages something like ten thousand hashes a second per thread. In money
+        that is a fraction of a cent an hour, which is exactly why this works as a game and would
+        not work as a business. The point is the leaderboard, not the payout.
       </p>
 
       <h2>Do you make money from this?</h2>
       <p>
-        The pool credits a single payout address belonging to the site owner. It is the only revenue
-        and there are no ads. <a {...linkProps("/stats")}>The stats page</a> shows every share that
-        has ever been accepted.
+        The work goes to zpool, which credits a single BTC address belonging to the site owner. It
+        is the only revenue and there are no ads. <a {...linkProps("/stats")}>The stats page</a>{" "}
+        shows every share that has ever been accepted.
       </p>
 
       <h2>Can I mine for my own listing?</h2>
@@ -35,7 +35,7 @@ export function Faq() {
         checks the hash. Making one up costs the same work as finding one honestly.
       </p>
 
-      <h2>I lost my edit token.</h2>
+      <h2>What if I lose my edit token?</h2>
       <p>
         It is shown once and only its hash is stored, so it cannot be recovered. The listing keeps
         working; only editing its name and tagline is gone.
@@ -43,8 +43,8 @@ export function Faq() {
 
       <h2>Does it work on a phone?</h2>
       <p>
-        It runs, but a phone is slow at this and hot afterwards. If you do, use one thread and a
-        high throttle.
+        It runs, but a phone is slow at this and hot afterwards. If you try it anyway, use one
+        thread and a high throttle.
       </p>
     </Prose>
   );

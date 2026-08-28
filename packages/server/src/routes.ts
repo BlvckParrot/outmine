@@ -112,7 +112,7 @@ app.onError((err, c) => {
 /** Bodies are bounded before they are read. Unbounded, one request could buffer as
  *  much memory as the sender cares to send. */
 const boundedBody = (maxSize: number) =>
-  bodyLimit({ maxSize, onError: (c) => c.json({ error: "too large" }, 413) });
+  bodyLimit({ maxSize, onError: (c) => c.json({ error: "That request is too large." }, 413) });
 
 /** The JSON a new listing is made of. Only the shape is checked here - what counts as
  *  a valid target, and what a name is trimmed to, stays in listings.ts, which is the
@@ -123,9 +123,9 @@ const newListingBody = validator("json", (value, c) => {
   // an equality, but cannot subtract from it, so the negative form leaves `string`
   // behind and the literal union has to be asserted back in.
   const kind = raw === "handle" ? "handle" : raw === "domain" ? "domain" : null;
-  if (kind === null) return c.json({ error: "kind must be domain or handle" }, 400);
+  if (kind === null) return c.json({ error: "A listing is either a domain or an @handle." }, 400);
   if (typeof target !== "string" || typeof name !== "string") {
-    return c.json({ error: "target and name are required" }, 400);
+    return c.json({ error: "A listing needs a target and a name." }, 400);
   }
 
   // Annotated, not inferred. Hono reads the validator's return type to type
@@ -142,14 +142,14 @@ const editListingBody = validator("json", (value, c) => {
   const body = value as Record<string, unknown>;
   for (const field of ["name", "tagline"] as const) {
     if (body[field] !== undefined && typeof body[field] !== "string") {
-      return c.json({ error: `${field} must be text` }, 400);
+      return c.json({ error: `The ${field} must be text.` }, 400);
     }
   }
   // An empty patch is also what a body the validator declined to parse looks like: it
   // hands the handler {} when the Content-Type is not JSON, and answering 200 with the
   // unchanged listing would tell the sender an edit happened that did not.
   if (body.name === undefined && body.tagline === undefined) {
-    return c.json({ error: "name or tagline is required" }, 400);
+    return c.json({ error: "Send a name or a tagline to change." }, 400);
   }
   return body as { name?: string; tagline?: string };
 });
@@ -187,9 +187,13 @@ const byAddress = (c: Context<{ Bindings: RequestContext }>) =>
  *  A *missing* token is deliberately not routed through here. It is what a cleared
  *  localStorage looks like, it happens to honest people, and since the throttle keys on
  *  the event name that noise would hide the guessing it exists to show. */
-const authFailed = (c: Context<{ Bindings: RequestContext }>, reason: string) => {
+const authFailed = (
+  c: Context<{ Bindings: RequestContext }>,
+  reason: string,
+  message = reason,
+) => {
   throttled("auth_failed", { path: c.req.path, reason, address: byAddress(c) });
-  return c.json({ error: reason }, 401);
+  return c.json({ error: message }, 401);
 };
 
 /** Per-address sliding window. Without it a bot floods the pending list, which is
@@ -203,7 +207,7 @@ const newListingLimit = rateLimiter<{ Bindings: RequestContext }>({
   keyGenerator: byAddress,
   handler: (c) => {
     throttled("rate_limited", { path: c.req.path, address: byAddress(c) });
-    return c.json({ error: "slow down" }, 429);
+    return c.json({ error: "Too much from here just now — try again in a minute." }, 429);
   },
 });
 
@@ -220,7 +224,7 @@ const readLimit = rateLimiter<{ Bindings: RequestContext }>({
   keyGenerator: byAddress,
   handler: (c) => {
     throttled("rate_limited", { path: c.req.path, address: byAddress(c) });
-    return c.json({ error: "slow down" }, 429);
+    return c.json({ error: "Too much from here just now — try again in a minute." }, 429);
   },
 });
 
@@ -297,14 +301,15 @@ app.post("/api/listings", newListingLimit, boundedBody(config.limits.maxBodyByte
 
 app.patch("/api/listings/:id", readLimit, boundedBody(config.limits.maxBodyBytes), editListingBody, (c) => {
   const token = c.req.header("x-edit-token");
-  if (!token) return c.json({ error: "missing edit token" }, 401);
+  if (!token) return c.json({ error: "This needs the edit token for that listing." }, 401);
 
   try {
     return c.json(updateListing(c.req.param("id"), token, c.req.valid("json")));
   } catch (err) {
     // AuthError first: it extends TargetError, so the order is what decides whether a
     // guessed token is answered as 401 and logged or as an unremarkable 400.
-    if (err instanceof AuthError) return authFailed(c, err.message);
+    if (err instanceof AuthError)
+      return authFailed(c, err.message, "That edit token does not match this listing.");
     if (err instanceof TargetError) return c.json({ error: err.message }, 400);
     throw err;
   }
@@ -319,7 +324,7 @@ app.patch("/api/listings/:id", readLimit, boundedBody(config.limits.maxBodyBytes
  *  upload form off a listing that anyone can create with one POST. */
 app.put("/api/listings/:id/icon", readLimit, boundedBody(config.limits.maxIconBytes), async (c) => {
   const token = c.req.header("x-edit-token");
-  if (!token) return c.json({ error: "missing edit token" }, 401);
+  if (!token) return c.json({ error: "This needs the edit token for that listing." }, 401);
 
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   try {
@@ -327,7 +332,8 @@ app.put("/api/listings/:id/icon", readLimit, boundedBody(config.limits.maxIconBy
     log("listing_icon_set", { id: listing.id, bytes: bytes.length });
     return c.json({ ok: true });
   } catch (err) {
-    if (err instanceof AuthError) return authFailed(c, err.message);
+    if (err instanceof AuthError)
+      return authFailed(c, err.message, "That edit token does not match this listing.");
     if (err instanceof TargetError) return c.json({ error: err.message }, 400);
     throw err;
   }
@@ -343,7 +349,7 @@ app.delete("/api/listings/:id", readLimit, (c) => {
 
   const id = c.req.param("id");
   const listing = getListing(id);
-  if (!listing) return c.json({ error: "not found" }, 404);
+  if (!listing) return c.json({ error: "No such listing." }, 404);
 
   // Before the row goes: the hub is still holding miners on this listing and their
   // unflushed counters, and a share_bucket INSERT for a listing that no longer exists
@@ -356,7 +362,7 @@ app.delete("/api/listings/:id", readLimit, (c) => {
 
 app.get("/api/listings/:id", (c) => {
   const listing = getListing(c.req.param("id"));
-  if (!listing) return c.json({ error: "not found" }, 404);
+  if (!listing) return c.json({ error: "No such listing." }, 404);
   const detail: ListingDetail = {
     ...listing,
     rank: listing.visible ? listingRank(listing) : null,

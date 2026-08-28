@@ -27,7 +27,7 @@ export class AuthError extends TargetError {}
 
 export function normalizeTarget(kind: "domain" | "handle", raw: string): string {
   const input = raw.trim();
-  if (!input) throw new TargetError("empty target");
+  if (!input) throw new TargetError("A listing needs a domain or an @handle.");
   return kind === "handle" ? normalizeHandle(input) : normalizeDomain(input);
 }
 
@@ -36,11 +36,11 @@ function normalizeHandle(input: string): string {
   let handle = input;
   if (/^https?:\/\//i.test(input)) {
     const url = parseUrl(input);
-    if (!HANDLE_HOSTS.has(url.hostname.toLowerCase())) throw new TargetError("not an x.com profile");
+    if (!HANDLE_HOSTS.has(url.hostname.toLowerCase())) throw new TargetError("That is not an x.com profile.");
     handle = url.pathname.replace(/^\/+/, "");
   }
   handle = handle.replace(/^@/, "").toLowerCase();
-  if (!/^[a-z0-9_]{1,15}$/.test(handle)) throw new TargetError("invalid handle");
+  if (!/^[a-z0-9_]{1,15}$/.test(handle)) throw new TargetError("That is not an x.com handle.");
   return handle;
 }
 
@@ -50,10 +50,10 @@ function normalizeDomain(input: string): string {
   // the tracking lives in the redirect rather than the URL.
   const url = parseUrl(/^https?:\/\//i.test(input) ? input : `https://${input}`);
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
-  if (SHORTENERS.has(host)) throw new TargetError("link shortener");
+  if (SHORTENERS.has(host)) throw new TargetError("Link shorteners are not accepted — list the real destination.");
   // A public listing needs a public name: at least one dot, no bare hosts or IPs.
-  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) throw new TargetError("invalid domain");
-  if (/^\d+(\.\d+)*$/.test(host)) throw new TargetError("invalid domain");
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) throw new TargetError("That is not a domain this board can list.");
+  if (/^\d+(\.\d+)*$/.test(host)) throw new TargetError("That is not a domain this board can list.");
 
   // The host is bounded by the regex above; the path is not, so it is capped here -
   // otherwise a listing carries however long a path the sender chose into every row
@@ -66,9 +66,9 @@ function parseUrl(candidate: string): URL {
   try {
     url = new URL(candidate);
   } catch {
-    throw new TargetError("invalid url");
+    throw new TargetError("That is not a link this board can read.");
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new TargetError("invalid protocol");
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new TargetError("Only http and https links can be listed.");
   return url;
 }
 
@@ -76,7 +76,7 @@ function checkedName(raw: string): string {
   const name = cleanText(raw).slice(0, config.board.maxNameLength);
   // cleanText can empty a string that looked non-empty: a name of pure zero-width
   // characters would render as a blank row on the board.
-  if (!name) throw new TargetError("name required");
+  if (!name) throw new TargetError("A listing needs a name.");
   return refused(name, "name");
 }
 
@@ -88,7 +88,7 @@ const checkedTagline = (raw: string) =>
  *  be smuggled past the ceiling by padding in front of it. */
 function refused(value: string, field: string): string {
   const word = blockedWord(value);
-  if (word) throw new TargetError(`${field} contains a word this board does not take`);
+  if (word) throw new TargetError(`The ${field} contains a word this board does not take.`);
   return value;
 }
 
@@ -100,7 +100,7 @@ export function createListing(input: {
   name: string;
   tagline?: string;
 }): CreateResult {
-  if (input.kind !== "domain" && input.kind !== "handle") throw new TargetError("invalid kind");
+  if (input.kind !== "domain" && input.kind !== "handle") throw new TargetError("A listing is either a domain or an @handle.");
 
   const target = normalizeTarget(input.kind, input.target);
   const name = checkedName(input.name);
@@ -124,7 +124,7 @@ export function createListing(input: {
     } catch (err) {
       const message = String(err);
       if (!message.includes("UNIQUE")) throw err;
-      if (message.includes("listings.target")) throw new TargetError("already listed");
+      if (message.includes("listings.target")) throw new TargetError("That target is already listed.");
       // otherwise: id collision, try another
     }
   }
@@ -137,7 +137,7 @@ function owned(id: string, editToken: string): Listing {
   const row = db
     .query<{ edit_token_hash: string }, [string]>(`SELECT edit_token_hash FROM listings WHERE id = ?`)
     .get(id);
-  if (!row) throw new TargetError("no such listing");
+  if (!row) throw new TargetError("No such listing.");
   if (!secretsMatch(row.edit_token_hash, hashToken(editToken))) throw new AuthError("bad edit token");
   return getListing(id)!;
 }
@@ -168,7 +168,7 @@ export function updateListing(
 }
 
 const text = (value: unknown, field: string): string => {
-  if (typeof value !== "string") throw new TargetError(`${field} must be text`);
+  if (typeof value !== "string") throw new TargetError(`The ${field} must be text.`);
   return value;
 };
 
@@ -186,7 +186,7 @@ const text = (value: unknown, field: string): string => {
  *  goes to a third of PNG losslessly, and lossy would only fray its edges. A photograph
  *  goes the other way: lossless barely beats PNG, quality 90 is six times smaller. */
 export async function checkedIcon(bytes: Uint8Array): Promise<Uint8Array> {
-  if (bytes.length > config.limits.maxIconBytes) throw new TargetError("icon too large");
+  if (bytes.length > config.limits.maxIconBytes) throw new TargetError("That icon is too large.");
 
   // One Image per encoder rather than one pipeline used twice: the pipeline is mutable,
   // and sharing it makes the second webp() hand back the first one's bytes without an
@@ -206,7 +206,7 @@ export async function checkedIcon(bytes: Uint8Array): Promise<Uint8Array> {
     // Names the formats the picker offers rather than everything Bun happens to read:
     // this line is the only feedback someone uploading an SVG by hand ever gets.
     throw new TargetError(
-      `icon must be a png, jpeg, webp or gif of at most ${ICON_MAX_PX}x${ICON_MAX_PX}`,
+      `An icon must be a png, jpeg, webp or gif of at most ${ICON_MAX_PX}x${ICON_MAX_PX}.`,
     );
   }
   return lossless.length <= lossy.length ? lossless : lossy;
@@ -221,7 +221,7 @@ export async function setIcon(
 ): Promise<Listing> {
   const listing = owned(id, editToken);
   if (listing.score * POINT_SCALE < config.board.iconMinPoints) {
-    throw new TargetError(`an icon unlocks at ${config.board.iconMinPoints} points`);
+    throw new TargetError(`An icon unlocks at ${config.board.iconMinPoints} points.`);
   }
 
   const icon = await checkedIcon(bytes);

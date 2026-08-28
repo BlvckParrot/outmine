@@ -12,11 +12,12 @@ export function About() {
       <h2>How the mining works</h2>
       <p>
         Your browser runs a miner compiled to WebAssembly from the same C code a desktop miner
-        uses. It hashes <strong>RinHash</strong>, an algorithm chosen because it resists the
-        specialised hardware that makes browser mining pointless on every well-known coin — and
-        because it is fifteen times faster in a browser than the alternative we started with. The
-        work goes to a mining pool through this server, and the proceeds go to the site owner.
-        That is the deal, stated plainly: you spend electricity, a listing you chose gains rank.
+        uses. It hashes whichever algorithm this server mines, which here is{" "}
+        <strong>RinHash</strong> — chosen because it resists the specialised hardware that makes
+        browser mining pointless on every well-known coin, and because it runs fifteen times faster
+        in a browser than MinotaurX, which is where this started. The work goes to a mining pool
+        through this server, and the proceeds go to the site owner. That is the deal, stated
+        plainly: you spend electricity, a listing you chose gains rank.
       </p>
       <p>
         Nothing is mined until you press a button. Threads and throttle are yours to set, mining

@@ -35,7 +35,7 @@ export function Hero() {
           )}
         </span>
         {online && <span> · {board.mining} mining · {fmt(hashrate)} H/s</span>}
-        <span className="text-foreground"> · see stats→</span>
+        <span className="text-foreground"> · see stats →</span>
       </a>
 
       <h2 className="mt-5 flex flex-wrap items-center justify-center gap-x-3 text-center text-[28px] font-bold tracking-[-0.03em] text-pretty md:text-[40px]">
@@ -51,7 +51,7 @@ export function Hero() {
 
       <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-balance text-muted-foreground">
         <span className="text-primary">New listings start at zero.</span> Mining less than #1
-        still puts you on the board, at whatever place the hashes you spend can take.
+        still puts you on the board, at whatever place the hashes you spend can take it.
       </p>
 
       <SubmitForm />

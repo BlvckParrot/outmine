@@ -110,7 +110,7 @@ export function Home() {
             {loading
               ? "Searching…"
               : q
-                ? `Nothing matches "${q}".`
+                ? `Nothing matches “${q}”.`
                 : "Nothing on the board yet. A listing appears once someone has mined for it."}
           </Card>
         )}
@@ -152,7 +152,7 @@ export function Home() {
         <section className="mt-10">
           <h2 className="mb-1 text-sm font-semibold tracking-[-0.02em]">Waiting for hashes</h2>
           <p className="mb-3 text-xs text-muted-foreground">
-            These are not on the board yet. Mine {board.threshold} shares for one and it joins.
+            These are not on the board yet. One joins the board at {board.threshold} shares.
           </p>
           <ul className="space-y-2">
             {view.pending.map((entry) => (

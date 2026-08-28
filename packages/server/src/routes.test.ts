@@ -100,7 +100,7 @@ test("the same target cannot be listed twice", async () => {
 
   const second = await post({ kind: "domain", target, name: "Second" });
   expect(second.status).toBe(400);
-  expect((await second.json()).error).toBe("already listed");
+  expect((await second.json()).error).toBe("That target is already listed.");
 });
 
 test.each([

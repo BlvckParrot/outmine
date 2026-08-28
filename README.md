@@ -33,7 +33,7 @@ from the very people who would mine them onto the board would be a wall.
 ## Nothing mines unless you ask
 
 A banner is the first thing on the page, and it says what this is in one line: this site
-mines cryptocurrency with your CPU, the proceeds go to the site owner, it will use battery.
+mines cryptocurrency with your CPU, the proceeds go to the site owner, it will drain a battery.
 
 Accepting it is not the same as starting. **A stored consent still does not start the CPU.**
 A returning visitor is not asked twice, but they still press a button before a single hash

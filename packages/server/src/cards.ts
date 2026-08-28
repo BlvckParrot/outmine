@@ -82,7 +82,7 @@ export function cardSvg(listing: ListingDetail): string {
     ? { text: `#${listing.rank}`, size: 150 }
     : { text: "in the queue", size: 76 };
   const footing = listing.rank
-    ? `${points(listing.score)} pts · ${listing.shares} shares`
+    ? `${points(listing.score)} pts · ${listing.shares} share${listing.shares === 1 ? "" : "s"}`
     : `${listing.shares} of ${config.board.visibilityThreshold} shares needed`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}">

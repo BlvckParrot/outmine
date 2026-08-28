@@ -10,7 +10,7 @@ export function ConsentBanner({ onAccept }: { onAccept: () => void }) {
       <p className="mt-2 text-muted-foreground">
         Nothing starts until you pick a listing. Mining runs only while this tab is open, you choose how many
         threads and how hard, and you can stop at any time. The proceeds go to the site owner — that is the point:
-        rank here is paid in CPU time instead of money. It will use battery.
+        rank here is paid in CPU time instead of money. It will drain a battery.
       </p>
       <button
         onClick={onAccept}
