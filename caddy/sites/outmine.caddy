@@ -37,9 +37,12 @@ www.{$SITE_ADDRESS:localhost} {
 
 	# WebSockets need no special config in Caddy 2 - reverse_proxy upgrades them.
 	#
-	# PORT is the app's, not Caddy's: docker-compose.yml passes the same value to both
-	# containers, so moving the app is one edit in .env rather than four that have to
-	# agree. Caddy substitutes {$PORT} textually before parsing, so it is as valid here
-	# as in a site address.
-	reverse_proxy app:{$PORT:3000}
+	# `outmine` is the network alias docker-compose.yml gives the app container, not its
+	# service name. The edge Caddy resolves names across a network shared by every stack
+	# on the machine, where `app` is whatever won the race to be called that.
+	#
+	# PORT is the app's, not Caddy's, and both read it from the same .env - so moving the
+	# app is one edit rather than four that have to agree. Caddy substitutes {$PORT}
+	# textually before parsing, so it is as valid here as in a site address.
+	reverse_proxy outmine:{$PORT:3000}
 }

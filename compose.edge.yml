@@ -1,0 +1,59 @@
+# The edge, on its own. Caddy used to be a service inside docker-compose.yml, which was
+# right while outmine was the only thing on the machine and wrong the moment it was not:
+# whoever owns :80 and :443 owns them for the whole host, so a second stack had no way in.
+#
+# On the server this file is /srv/edge/docker-compose.yml and starts once. Locally it is
+# an overlay, and the pair behaves exactly as the single file used to:
+#
+#   docker network create edge        # once
+#   docker compose -f docker-compose.yml -f compose.edge.yml up
+#
+# The network is `external` rather than declared here so neither stack owns it. Compose
+# would otherwise name it after whichever project created it, and the other would be
+# attaching to a network belonging to something it knows nothing about.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    # Pinned to a patch like everything else that ships - the miner has its submodule
+    # SHAs, the app has bun.lock and oven/bun:1.4.0 - because a floating `caddy:2` was
+    # the last thing in front of the site that could change under it without a commit
+    # saying so. Moved by .github/dependabot.yml, not by whenever the host last pulled.
+    image: caddy:2.11.4
+    restart: unless-stopped
+    logging: *logging
+    # SITE_ADDRESS for outmine's site file, and one more line per app that needs one.
+    # Read from an .env beside this file on the server; unset, the site files fall back
+    # to localhost and a local run works with no environment at all.
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      PORT: ${PORT:-3000}
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3. Caddy binds UDP/443 and advertises Alt-Svc: h3 on its own under TLS, so
+      # without this every browser tries QUIC against a port nothing is published on,
+      # fails, and falls back - a wasted round trip per origin to advertise nothing.
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The directory, not one file: this is where each app's routing lands.
+      - ./caddy/sites:/etc/caddy/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:

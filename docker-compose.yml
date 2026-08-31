@@ -31,9 +31,10 @@ services:
     cap_drop:
       - ALL
     environment:
-      # Caddy is always the single hop in front of the app in this compose file, so
-      # the client address is the last X-Forwarded-For entry. Left unset, the rate
-      # limiter would see Caddy's address for everyone and limit the whole site as one.
+      # The edge Caddy is always the single hop in front of the app - see
+      # compose.edge.yml - so the client address is the last X-Forwarded-For entry.
+      # Left unset, the rate limiter would see Caddy's address for everyone and limit
+      # the whole site as one.
       TRUSTED_PROXIES: 1
       # Caddy forwards the original Host but the hop to the app is plain http, so a
       # URL derived from the request would advertise og:image over http and X would
@@ -50,7 +51,7 @@ services:
       - ./backups:/app/backups
     # Both follow PORT, which is read from the same .env the app gets through env_file
     # above. Pinned separately they were a third and fourth copy of the number, so
-    # moving the app broke the healthcheck and Caddy's upstream at the same time.
+    # moving the app broke the healthcheck and the edge's upstream at the same time.
     expose:
       - "${PORT:-3000}"
     healthcheck:
@@ -59,42 +60,17 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    # Reached by the edge Caddy across the shared network, by this alias rather than by
+    # the service name. `app` is what half the compose files on a machine call their
+    # application container, and the first collision would be Caddy quietly proxying
+    # outmine's hostname at somebody else's process. See compose.edge.yml.
+    networks:
+      edge:
+        aliases:
+          - outmine
 
-  caddy:
-    # Pinned to a patch like everything else that ships - the miner has its submodule
-    # SHAs, the app has bun.lock and oven/bun:1.4.0 - because a floating `caddy:2` was
-    # the last thing in front of the site that could change under it without a commit
-    # saying so. Moved by .github/dependabot.yml, not by whenever the host last pulled.
-    image: caddy:2.11.4
-    restart: unless-stopped
-    logging: *logging
-    # Caddy reads SITE_ADDRESS from the Caddyfile. Without it Caddy silently falls back
-    # to localhost and never gets a certificate for the real domain.
-    #
-    # Named explicitly rather than env_file: .env, which handed the one container that
-    # faces the internet the payout address, the pool password and the admin token -
-    # none of which it has any use for.
-    environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
-      # The app's port, for the reverse_proxy upstream in the Caddyfile - not Caddy's
-      # own, which is 80/443 below. Same default as config.ts, so an unset PORT works.
-      PORT: ${PORT:-3000}
-    ports:
-      - "80:80"
-      - "443:443"
-      # HTTP/3. Caddy binds UDP/443 and advertises Alt-Svc: h3 on its own under TLS, so
-      # without this every browser tries QUIC against a port nothing is published on,
-      # fails, and falls back - a wasted round trip per origin to advertise nothing.
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      - app
-
-volumes:
-  caddy_data:
-  caddy_config:
+# Created once with `docker network create edge`, and owned by neither stack - see the
+# header of compose.edge.yml.
+networks:
+  edge:
+    external: true

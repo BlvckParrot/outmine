@@ -1,0 +1,11 @@
+# The machine's edge. One Caddy for the whole host, because two stacks cannot both
+# bind :443 - and this host runs more than outmine.
+#
+# It holds no routes of its own. Every app drops a site file into sites/ and owns it:
+# outmine's arrives with its deploy (see deploy.sh), anything else is placed by hand.
+# One shared file would mean every deploy rewriting every other app's routing.
+#
+# A site file that fails to parse takes the whole config down with it, so `caddy reload`
+# validates before swapping - a bad file leaves the old config running and the reload
+# exits non-zero. That is why the deploy reloads rather than restarts.
+import /etc/caddy/sites/*.caddy

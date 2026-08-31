@@ -90,6 +90,6 @@ USER bun
 
 # Documentation, not a binding: on a user-defined bridge network every port is already
 # reachable between containers. PORT is what actually moves the server - see config.ts,
-# and docker-compose.yml, which hands the same value to Caddy.
+# and docker-compose.yml, which hands the same value to the edge Caddy.
 EXPOSE 3000
 CMD ["bun", "packages/server/src/server.ts"]
