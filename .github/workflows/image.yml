@@ -137,9 +137,13 @@ jobs:
       # half that check cannot see - DNS, the edge Caddy, the certificate, the route
       # to the app.
       #
-      # Written out rather than hidden in a secret, unlike the deploy host above. This
-      # one is on the README, in the repository description and in its website field:
-      # putting it in a secret would mask it in the logs and nowhere else, which is
-      # theatre rather than secrecy.
+      # A variable and not a secret, unlike the deploy host above: this address is on
+      # the README, in the repository description and in the website field, so masking
+      # it in the log and nowhere else would be theatre. But not written out either -
+      # nothing else in this repository names one deployment, and a fork whose CI
+      # health-checks somebody else's site is worse than one that skips the step.
       - name: Check the site from outside
-        run: curl -fsS --max-time 20 https://outmine.lol/health | grep -q '"ok":true'
+        if: vars.SITE_URL != ''
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: curl -fsS --max-time 20 "$SITE_URL/health" | grep -q '"ok":true'
