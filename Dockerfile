@@ -1,4 +1,8 @@
 # The WASM miner is built from C sources, so the image needs emscripten once.
+# Kept identical to the `container:` in .github/workflows/wasm.yml on purpose: that
+# workflow is the only thing that checks the miner's output against known vectors, and
+# if it ran a different emcc than this line, it would be checking a different miner than
+# the one that ships - with nothing anywhere going red to say so.
 FROM emscripten/emsdk:4.0.7 AS wasm
 WORKDIR /build/packages/wasm
 # No clone and no fetch. The upstream sources are submodules of this repository, pinned
@@ -10,7 +14,11 @@ WORKDIR /build/packages/wasm
 COPY packages/wasm ./
 RUN ./build.sh
 
-FROM oven/bun:1 AS web
+# Same patch as `bun-version` in both workflows, and the same in the final stage below.
+# `oven/bun:1` meant CI checked one runtime and the host ran whatever the tag resolved to
+# on build day. Four literals rather than one ARG: they move together about once a year,
+# and a build argument would hide in the layer cache what a grep for the version finds.
+FROM oven/bun:1.4.0 AS web
 WORKDIR /app
 # Workspace manifests first so the dependency layer caches independently of sources.
 COPY package.json bun.lock* tsconfig.json ./
@@ -27,7 +35,7 @@ COPY packages/web ./packages/web
 COPY --from=wasm /build/packages/web/public/ ./packages/web/public/
 RUN bun --filter @outmine/web build
 
-FROM oven/bun:1
+FROM oven/bun:1.4.0
 WORKDIR /app
 # Every workspace in the lockfile must exist on disk, even ones this stage does not
 # install from, or bun install refuses to resolve.

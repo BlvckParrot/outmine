@@ -14,8 +14,14 @@ services:
     # undoes the wasm source pinning: .dockerignore exists to keep the builder's own
     # vendor/ out of the context, and a CI runner has none.
     #
+    # Which build runs here is the host's to say, not this file's. `:latest` left the
+    # host with no record of what it was running and no way back to the one that worked
+    # - and the image job already publishes an immutable :<commit sha> tag beside it,
+    # which had no consumer. This is the consumer. Deploy and rollback are both a change
+    # to IMAGE_TAG in .env followed by `docker compose pull && docker compose up -d`.
+    #
     # To build locally instead, swap the two lines below.
-    image: ghcr.io/blvckparrot/outmine:latest
+    image: ghcr.io/blvckparrot/outmine:${IMAGE_TAG:?set IMAGE_TAG in .env to a commit sha published by .github/workflows/image.yml}
     # build: .
     restart: unless-stopped
     logging: *logging
@@ -55,10 +61,11 @@ services:
       start_period: 10s
 
   caddy:
-    # Floating tag. The wasm stage pins three git SHAs and a file digest for the miner;
-    # pin this and oven/bun:1 by digest to match - `docker image inspect caddy:2
-    # --format '{{index .RepoDigests 0}}'` after a pull gives the line to paste.
-    image: caddy:2
+    # Pinned to a patch like everything else that ships - the miner has its submodule
+    # SHAs, the app has bun.lock and oven/bun:1.4.0 - because a floating `caddy:2` was
+    # the last thing in front of the site that could change under it without a commit
+    # saying so. Moved by .github/dependabot.yml, not by whenever the host last pulled.
+    image: caddy:2.11.4
     restart: unless-stopped
     logging: *logging
     # Caddy reads SITE_ADDRESS from the Caddyfile. Without it Caddy silently falls back

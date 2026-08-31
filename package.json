@@ -2,6 +2,9 @@
   "name": "outmine",
   "private": true,
   "license": "GPL-2.0-only",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
   "type": "module",
   "workspaces": [
     "packages/*"
