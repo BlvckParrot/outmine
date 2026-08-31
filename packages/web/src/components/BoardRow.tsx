@@ -98,6 +98,17 @@ export function PendingRow(props: {
           {entry.name}
         </a>
         <p className="truncate text-xs text-muted-foreground/70">{entry.tagline || entry.target}</p>
+        {/* The same line a row on the board gets, and the row that needs it more: this
+            one is asking to be mined for. The snapshot has carried `miners` and
+            `hashrate` for pending listings all along - boardSnapshot maps them through
+            the same live() as the board - and this component was dropping them, so on
+            a fresh install, where every listing is pending, nothing on the page ever
+            said anybody was here. */}
+        {entry.miners > 0 && (
+          <p className="truncate text-xs font-semibold text-live">
+            {entry.miners} mining · {fmt(entry.hashrate)} H/s
+          </p>
+        )}
         <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
           <div
             className="h-full bg-primary"

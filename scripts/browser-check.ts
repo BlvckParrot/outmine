@@ -60,12 +60,26 @@ const finalHashrate = await readStat("hashrate");
 // With a wait, because on a fresh install the listing being mined is still in the
 // queue: it only reaches the board when the flush loop writes the share out, up to
 // FLUSH_MS later. Asserting the instant a share lands failed for timing, not drift.
-const minerRow = page.locator("ol li", { hasText: /\d+ mining/ }).first();
+//
+// `li` and not `ol li`: a listing below the visibility gate is rendered by PendingRow
+// into a plain <ul>, and on a fresh install that is every listing there is. Scoped to
+// the board section for the same reason it is not scoped tighter - the string is
+// specific enough that nothing else on the page can match it.
+const minerRow = page.locator("li", { hasText: /\d+ mining/ }).first();
 const minersShown = await minerRow
   .waitFor({ timeout: 60_000 })
   .then(() => true)
   .catch(() => false);
 console.log(`miners shown on a row: ${minersShown}`);
+
+// The header's own reading, which is a different number from the panel's: the panel is
+// this browser, the header is the server's count of everyone. Printed on every tick
+// above and asserted nowhere, which is how it went unnoticed that the figure was summed
+// client-side from the rows on screen - one page of the board, `pending` excluded - so
+// the same line could say "1 mining" and "0 H/s" while shares were landing.
+const headerText = (await page.getByRole("link", { name: /online/ }).first().textContent())?.trim() ?? "";
+const headerHashrate = Number.parseFloat(headerText.match(/([\d.]+)\s*[kM]?\s*H\/s/)?.[1] ?? "0") > 0;
+console.log(`header reads: "${headerText}"`);
 
 // Moving the threads slider tears the worker pool down and builds it again. The new
 // workers used to be handed nothing - setJob dropped the job as a repeat of the one the
@@ -102,6 +116,7 @@ await page.screenshot({ path: `${SHOT}/04-returning-visitor.png` });
 const checks = {
   accepted: finalAccepted > 0,
   minersShown,
+  headerHashrate,
   threadChangeKeepsMining,
   survivedNavigation: onAbout && stillMining && acceptedAfterNav >= finalAccepted,
   consentRemembered: !bannerBack,

@@ -8,7 +8,6 @@ import { SubmitForm } from "./SubmitForm";
 export function Hero() {
   const { board, online } = useSession();
   const top = board.entries[0];
-  const hashrate = board.entries.reduce((sum, e) => sum + e.hashrate, 0);
 
   return (
     <header className="mb-6 text-center">
@@ -34,7 +33,7 @@ export function Hero() {
             <span className="font-semibold">offline — reconnecting</span>
           )}
         </span>
-        {online && <span> · {board.mining} mining · {fmt(hashrate)} H/s</span>}
+        {online && <span> · {board.mining} mining · {fmt(board.hashrate)} H/s</span>}
         <span className="text-foreground"> · see stats →</span>
       </a>
 

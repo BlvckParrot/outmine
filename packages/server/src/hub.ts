@@ -656,6 +656,10 @@ function boardSnapshot(): BoardSnapshot {
     maxTaglineLength: config.board.maxTaglineLength,
     online: clients.size,
     mining: miningCount(),
+    // Summed from the same map the rows are, so the header and the board can never
+    // disagree, and only clients actually on a listing are in it - a stale reading
+    // left behind by somebody who stopped is not counted.
+    hashrate: Math.round([...hashrates.values()].reduce((sum, hs) => sum + hs, 0)),
     feed: feed.slice(-config.board.feedEntries),
   };
 }

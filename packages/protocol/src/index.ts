@@ -59,6 +59,11 @@ export type BoardSnapshot = {
   maxTaglineLength: number;
   online: number;
   mining: number;
+  /** Live hashrate of everyone on the site. A global, like the two above it, and for
+   *  the same reason: the header used to sum the `entries` it had, which is one page
+   *  of the board and excludes `pending` entirely - so a visitor mining the only
+   *  listing on a fresh board was told "1 mining - 0 H/s" by the same line. */
+  hashrate: number;
   feed: FeedItem[];
 };
 

@@ -10,7 +10,7 @@ import { rememberListing } from "./storage";
 
 const EMPTY: BoardSnapshot = {
   entries: [], pending: [], total: 0, limit: 1, threshold: 1, iconMinPoints: Infinity,
-  maxNameLength: 60, maxTaglineLength: 200, online: 0, mining: 0, feed: [],
+  maxNameLength: 60, maxTaglineLength: 200, online: 0, mining: 0, hashrate: 0, feed: [],
 };
 
 /** Reconnect delay, doubling up to the ceiling and reset by a connection that opens.
