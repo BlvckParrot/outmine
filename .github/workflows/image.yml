@@ -121,7 +121,10 @@ jobs:
           # do: the sha arrives as the requested command, the two files on stdin. There
           # is no scp because there does not need to be.
           #
-          # Addressed by name, not by address: the instance's public IP is ephemeral.
+          # A reserved address rather than a name. The name the site answers on is
+          # behind Cloudflare, so it does not resolve to the host, and the host has no
+          # name of its own worth publishing here. Reserved and not ephemeral, so a
+          # stop/start of the instance no longer changes it.
           tar -czf - docker-compose.yml caddy/sites/outmine.caddy \
             | ssh -i key \
                   -o UserKnownHostsFile=known_hosts \
@@ -129,10 +132,14 @@ jobs:
                   -o StrictHostKeyChecking=yes \
                   "$DEPLOY_USER@$DEPLOY_HOST" "$GITHUB_SHA"
 
-      # From outside, over the real hostname. `docker compose up --wait` on the far side
-      # already waited for the container's own healthcheck; this is the half that check
-      # cannot see - DNS, the edge Caddy, the certificate, the route to the app.
+      # From outside, over the address a visitor uses. `docker compose up --wait` on
+      # the far side already waited for the container's own healthcheck; this is the
+      # half that check cannot see - DNS, the edge Caddy, the certificate, the route
+      # to the app.
+      #
+      # Written out rather than hidden in a secret, unlike the deploy host above. This
+      # one is on the README, in the repository description and in its website field:
+      # putting it in a secret would mask it in the logs and nowhere else, which is
+      # theatre rather than secrecy.
       - name: Check the site from outside
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: curl -fsS --max-time 20 "https://$DEPLOY_HOST/health" | grep -q '"ok":true'
+        run: curl -fsS --max-time 20 https://outmine.lol/health | grep -q '"ok":true'
