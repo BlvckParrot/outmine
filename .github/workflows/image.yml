@@ -77,3 +77,53 @@ jobs:
           # submodule bump is exactly what should invalidate it.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The host used to be updated by hand: paste the new sha into .env, pull, up. That is
+  # a step that gets skipped, and a machine running a build nobody can name is how a
+  # rollback stops being possible.
+  #
+  # Only ever runs after `image`, so what it names is a tag that exists. `check` gates
+  # `image`, so it is also a build that typechecks and passes its tests.
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Two pushes in quick succession would otherwise race, and the loser would be the
+    # one that finished second - which is not the one that is newer. Queued, not
+    # cancelled: a half-applied deploy is worse than a slow one.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        # No submodules here. This job ships two text files; the miner is already inside
+        # the image the previous job pushed.
+
+      - name: Deploy
+        run: |
+          install -m600 /dev/null key
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > key
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > known_hosts
+          # The host key is pinned from a secret rather than accepted on first sight.
+          # ssh-keyscan here would mean every run trusting whoever answered, which is
+          # the hole known_hosts exists to close.
+          #
+          # The key on the far side carries a forced command (see /srv/outmine/deploy.sh
+          # and the command= prefix in authorized_keys), so this is the only thing it can
+          # do: the sha arrives as the requested command, the two files on stdin. There
+          # is no scp because there does not need to be.
+          #
+          # Addressed by name, not by address: the instance's public IP is ephemeral.
+          tar -czf - docker-compose.yml caddy/sites/outmine.caddy \
+            | ssh -i key \
+                  -o UserKnownHostsFile=known_hosts \
+                  -o IdentitiesOnly=yes \
+                  -o StrictHostKeyChecking=yes \
+                  ubuntu@outmine.duckdns.org "$GITHUB_SHA"
+
+      # From outside, over the real hostname. `docker compose up --wait` on the far side
+      # already waited for the container's own healthcheck; this is the half that check
+      # cannot see - DNS, the edge Caddy, the certificate, the route to the app.
+      - name: Check the site from outside
+        run: curl -fsS --max-time 20 https://outmine.duckdns.org/health | grep -q '"ok":true'
