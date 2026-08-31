@@ -99,8 +99,14 @@ export type ClientMessage =
  *  stops a small file from decompressing into hundreds of megabytes. */
 export const ICON_MAX_PX = 128;
 
-/** Score is a sum of pool difficulties, around 0.000002 per share. Raw, every listing
- *  reads "0 pts"; scaled, one share is worth a couple of points. */
+/** Score is a sum of pool difficulties. Raw, every listing reads "0 pts"; scaled, one
+ *  share is worth a few hundred.
+ *
+ *  rinhash.mine.zpool.ca:7444 sends 0.0005, so a share is ~500 points. Measured against
+ *  the running pool, not assumed: this comment used to say 0.000002, which is 250x out,
+ *  and ICON_MIN_POINTS was set from it - so a gate meant to cost a thousand shares cost
+ *  four. Anything sizing a threshold in points should check the difficulty the pool is
+ *  actually sending rather than trust this line, because the pool may move it. */
 export const POINT_SCALE = 1e6;
 
 /** 1234 -> "1.2k". Hashrates, shares and scores all span several orders of magnitude

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { ICON_MAX_PX } from "@outmine/protocol";
+import { ICON_MAX_PX, POINT_SCALE } from "@outmine/protocol";
 import { config } from "./config";
 import {
   checkedIcon, createListing, creditShares, deleteListing, getListing, likePattern,
-  normalizeTarget,
+  normalizeTarget, setIcon, TargetError,
 } from "./listings";
 
 test.each([
@@ -212,4 +212,31 @@ test("the same batch without the deleted listing credits normally", () => {
   const alive = createListing({ kind: "domain", target: "alive-ok.example.com", name: "Fine" }).listing;
   creditShares([[alive.id, { shares: 5, diffSum: 5 }]]);
   expect(getListing(alive.id)!.shares).toBe(5);
+});
+
+// --- the icon gate -------------------------------------------------------------------
+//
+// setIcon has two locks: the edit token says whose listing it is, and the points say
+// whether it has earned a logo. Only the token was ever tested, and the points gate was
+// open in practice - ICON_MIN_POINTS was set against a difficulty comment that was 250x
+// out, so it stood at four shares rather than the thousand it read like. Now that it is
+// a real threshold it is the thing that can quietly stop being one.
+//
+// The threshold is read from config rather than written out, the way makeVisible does in
+// routes.test.ts: this asserts that the gate holds, not what it is set to today.
+
+test("an icon is refused below the points threshold and accepted above it", async () => {
+  const { listing, editToken } = createListing({
+    kind: "domain", target: "icon-gate.example.com", name: "Gate",
+  });
+
+  // A share credits diffSum, and score * POINT_SCALE is what the gate compares. One
+  // short of the threshold, so this fails on the points and nothing else.
+  const justUnder = (config.board.iconMinPoints - 1) / POINT_SCALE;
+  creditShares([[listing.id, { shares: 1, diffSum: justUnder }]]);
+  await expect(setIcon(listing.id, editToken, PNG_1X1)).rejects.toThrow(TargetError);
+
+  // The single point that was missing.
+  creditShares([[listing.id, { shares: 1, diffSum: 1 / POINT_SCALE }]]);
+  expect((await setIcon(listing.id, editToken, PNG_1X1)).has_icon).toBe(1);
 });

@@ -263,14 +263,30 @@ export const config = {
 
   board: {
     /** Shares a listing needs before it appears on the board. This is the whole
-     *  anti-spam mechanism: listing costs the currency the game runs on. */
-    visibilityThreshold: int("VISIBILITY_THRESHOLD", 600, { min: 1 }),
+     *  anti-spam mechanism: listing costs the currency the game runs on.
+     *
+     *  Priced in time, not in taste. `bun run bench` measures rinhash at ~13.6 kH/s per
+     *  thread and the miner runs `hardwareConcurrency - 1` of them, so a laptop is
+     *  around 95 kH/s; at the pool's difficulty a share is ~2.15M hashes. Ten shares is
+     *  therefore about four minutes on eight cores and nine on four - enough that
+     *  creating listings in bulk is not free, short enough that a person finishes it in
+     *  one sitting. It was 600, which is nearly four hours, and the one listing in
+     *  production had reached 1. */
+    visibilityThreshold: int("VISIBILITY_THRESHOLD", 10, { min: 1 }),
     entries: int("BOARD_ENTRIES", 50, { min: 1, max: 500 }),
     /** Points a listing needs before its owner may replace the letter avatar with an
      *  uploaded icon. A logo is the loudest thing on a row, so it is earned in the
      *  currency the board runs on rather than handed to every new listing - and it
-     *  keeps an upload form off a listing anyone can create in one POST. */
-    iconMinPoints: int("ICON_MIN_POINTS", 2_000, { min: 0 }),
+     *  keeps an upload form off a listing anyone can create in one POST.
+     *
+     *  Points are difficulty-weighted (see POINT_SCALE), so at the difficulty the pool
+     *  currently sends this is about 40 shares: four times the board gate, a quarter of
+     *  an hour of mining. Deliberately a multiple of it - an icon is meant to be the
+     *  step after being on the board.
+     *
+     *  It was 2000, which the POINT_SCALE comment made look like a thousand shares and
+     *  which was really four. The icon unlocked before the listing was even visible. */
+    iconMinPoints: int("ICON_MIN_POINTS", 20_000, { min: 0 }),
     pendingEntries: int("BOARD_PENDING_ENTRIES", 20, { min: 1, max: 500 }),
     trendingEntries: int("BOARD_TRENDING_ENTRIES", 10, { min: 1, max: 500 }),
     feedEntries: int("BOARD_FEED_ENTRIES", 15, { min: 1, max: 200 }),
