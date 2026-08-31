@@ -267,11 +267,15 @@ export const config = {
      *
      *  Priced in time, not in taste. `bun run bench` measures rinhash at ~13.6 kH/s per
      *  thread and the miner runs `hardwareConcurrency - 1` of them, so a laptop is
-     *  around 95 kH/s; at the pool's difficulty a share is ~2.15M hashes. Ten shares is
-     *  therefore about four minutes on eight cores and nine on four - enough that
-     *  creating listings in bulk is not free, short enough that a person finishes it in
-     *  one sitting. It was 600, which is nearly four hours, and the one listing in
-     *  production had reached 1. */
+     *  around 95 kH/s. What a share costs in hashes is the pool's to decide and it
+     *  moves it - see POINT_SCALE - so ten shares is a range rather than a number:
+     *  roughly two to four minutes on eight cores at the difficulties seen so far, two
+     *  and a half times that on four. Enough that creating listings in bulk is not
+     *  free, short enough that a person finishes it in one sitting.
+     *
+     *  A gate in shares rather than in points on purpose, unlike iconMinPoints below.
+     *  This is a spam filter, not a ranking - it does not have to be fair to the hash,
+     *  and "7 of 10 shares" is something a progress bar can say. */
     visibilityThreshold: int("VISIBILITY_THRESHOLD", 10, { min: 1 }),
     entries: int("BOARD_ENTRIES", 50, { min: 1, max: 500 }),
     /** Points a listing needs before its owner may replace the letter avatar with an
@@ -279,10 +283,13 @@ export const config = {
      *  currency the board runs on rather than handed to every new listing - and it
      *  keeps an upload form off a listing anyone can create in one POST.
      *
-     *  Points are difficulty-weighted (see POINT_SCALE), so at the difficulty the pool
-     *  currently sends this is about 40 shares: four times the board gate, a quarter of
-     *  an hour of mining. Deliberately a multiple of it - an icon is meant to be the
-     *  step after being on the board.
+     *  In points and not in shares because points are difficulty-weighted, so this asks
+     *  for an amount of work rather than a number of pool round trips - the pool varies
+     *  difficulty (see POINT_SCALE) and a share count would quietly get cheaper every
+     *  time it did. How many shares that turns out to be therefore drifts: somewhere
+     *  around 40 to 85 at what has been observed, a quarter of an hour of mining either
+     *  way. Sized as a multiple of the board gate - an icon is the step after being on
+     *  the board, not a second copy of getting there.
      *
      *  It was 2000, which the POINT_SCALE comment made look like a thousand shares and
      *  which was really four. The icon unlocked before the listing was even visible. */

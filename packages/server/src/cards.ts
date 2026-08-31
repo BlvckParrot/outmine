@@ -153,11 +153,20 @@ export function render(svg: string): Buffer {
 /** The default card for every page that is not a single listing. Shows the top of the
  *  board, so a link to the site says what the site is rather than repeating its name. */
 export function homeCardSvg(top: { name: string; score: number }[]): string {
-  const rows = top.slice(0, 3).map((entry, i) => `
-    <text x="72" y="${330 + i * 62}" font-size="40" fill="${i === 0 ? PAPER : DIM}">${
-      escapeXml(`${i + 1}. ${truncate(entry.name, 22)}`)
-    }</text>
-    <text x="1128" y="${330 + i * 62}" font-size="40" text-anchor="end" fill="${GOLD}">${points(entry.score)}</text>`).join("");
+  // Three slots, always, filled or not. This used to map over `top` itself, which meant
+  // an empty board drew nothing below the tagline and the card went out two thirds
+  // black - on the one image every share of the site renders, and the one social
+  // networks cache for days off a URL with no cache-buster. A slot standing empty says
+  // the place is open, which at launch is the true and the more interesting reading.
+  const rows = Array.from({ length: 3 }, (_, i) => top[i]).map((entry, i) => `
+    <text x="72" y="${330 + i * 62}" font-size="40" fill="${
+      entry ? (i === 0 ? PAPER : DIM) : FAINT
+    }">${escapeXml(`${i + 1}. ${entry ? truncate(entry.name, 22) : "unclaimed"}`)}</text>${
+      entry
+        ? `
+    <text x="1128" y="${330 + i * 62}" font-size="40" text-anchor="end" fill="${GOLD}">${points(entry.score)}</text>`
+        : ""
+    }`).join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}">
   <rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${INK}"/>

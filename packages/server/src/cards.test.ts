@@ -51,3 +51,24 @@ test("a queued listing gets progress, not a lone dash at 150px", () => {
   expect(svg).toContain("120 of");
   expect(svg).not.toContain(">—<");
 });
+
+// The home card is the image every share of the site renders, and an empty board used
+// to leave it two thirds black - the failure a status code cannot see, which is why the
+// assertions below are on the slots rather than on "it rendered something".
+test("the home card fills all three slots whatever the board holds", () => {
+  const empty = homeCardSvg([]);
+  expect(empty.match(/unclaimed/g)).toHaveLength(3);
+  expect([...render(empty).subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+  // A board with one listing is the same failure in a smaller size, and the one this
+  // will actually be in for the first hour after launch.
+  const one = homeCardSvg([{ name: "Acme", score: 0.004 }]);
+  expect(one).toContain("1. Acme");
+  expect(one.match(/unclaimed/g)).toHaveLength(2);
+
+  // A full board must not have gained a placeholder along the way.
+  const full = homeCardSvg([
+    { name: "A", score: 0.004 }, { name: "B", score: 0.003 }, { name: "C", score: 0.002 },
+  ]);
+  expect(full).not.toContain("unclaimed");
+});

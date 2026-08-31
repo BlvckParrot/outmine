@@ -102,11 +102,17 @@ export const ICON_MAX_PX = 128;
 /** Score is a sum of pool difficulties. Raw, every listing reads "0 pts"; scaled, one
  *  share is worth a few hundred.
  *
- *  rinhash.mine.zpool.ca:7444 sends 0.0005, so a share is ~500 points. Measured against
- *  the running pool, not assumed: this comment used to say 0.000002, which is 250x out,
- *  and ICON_MIN_POINTS was set from it - so a gate meant to cost a thousand shares cost
- *  four. Anything sizing a threshold in points should check the difficulty the pool is
- *  actually sending rather than trust this line, because the pool may move it. */
+ *  There is no fixed points-per-share, and that is the point of the unit rather than a
+ *  wrinkle in it. rinhash.mine.zpool.ca:7444 runs vardiff: the first two hours in
+ *  production came in at 0.0005 and then 0.00024 per share, so the second hour took 2.8x
+ *  the shares for 1.3x the work. Shares count round trips, difficulty is what says how
+ *  much each one cost, and the board ranks on the sum - otherwise first place would go
+ *  to whoever mined while the pool was handing out easy work.
+ *
+ *  So a share is somewhere around 240 to 500 points, and any threshold written in points
+ *  is a number of shares only until the pool moves. Do not turn one into the other and
+ *  write the result down as a fact: this comment used to claim 0.000002, ICON_MIN_POINTS
+ *  was sized from it, and a gate meant to cost a thousand shares cost four. */
 export const POINT_SCALE = 1e6;
 
 /** 1234 -> "1.2k". Hashrates, shares and scores all span several orders of magnitude
