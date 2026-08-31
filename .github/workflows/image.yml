@@ -59,6 +59,14 @@ jobs:
         with:
           context: .
           push: true
+          # The deployment target is an Oracle Ampere A1, which is arm64, and an amd64-only
+          # image fails its `docker compose pull` with "no matching manifest". amd64 stays
+          # in the list so an x86 host is still one `pull` away if this one has to move.
+          #
+          # This costs almost nothing: the two expensive stages are pinned to
+          # $BUILDPLATFORM in the Dockerfile and are shared between the two, so only the
+          # runtime stage - a `bun install` of prebuilt binaries - is built twice.
+          platforms: linux/amd64,linux/arm64
           # Lowercase and spelled out rather than ${{ github.repository }}: GHCR rejects
           # an uppercase path, and the repository name carries its capitals.
           tags: |
