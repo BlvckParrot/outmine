@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+
+# Click-counting redirects. Rank here is bought with CPU time, so every outbound
+# link is paid placement and must not be crawled as an editorial one.
+Disallow: /r/
+
+# JSON and the operator's own traffic report. Nothing to index and a crawl budget
+# better spent on the board. /og/ and /badge/ are deliberately left crawlable: those
+# are the images the og:image tags point at.
+Disallow: /api/
+Disallow: /admin/
+
+# The Sitemap: line below is appended by the server. It has to be an absolute URL and
+# this file is built long before anyone knows what host it will be served from.

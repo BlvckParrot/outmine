@@ -1,0 +1,76 @@
+# Both services log one JSON line per event to stdout, and Docker's default json-file
+# driver has no size limit. On a single host that log grows into the same disk as the
+# ./data bind mount below, so left unbounded it takes the database down with it.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  app:
+    # Built by .github/workflows/image.yml and pulled here. Building on the host means
+    # a ~2 GB emscripten pull and ~35 C files through emcc -O3 on one core, and it also
+    # undoes the wasm source pinning: .dockerignore exists to keep the builder's own
+    # vendor/ out of the context, and a CI runner has none.
+    #
+    # Which build runs here is the host's to say, not this file's. `:latest` left the
+    # host with no record of what it was running and no way back to the one that worked
+    # - and the image job already publishes an immutable :<commit sha> tag beside it,
+    # which had no consumer. This is the consumer. Deploy and rollback are both a change
+    # to IMAGE_TAG in .env followed by `docker compose pull && docker compose up -d`.
+    #
+    # To build locally instead, swap the two lines below.
+    image: ghcr.io/blvckparrot/outmine:${IMAGE_TAG:?set IMAGE_TAG in .env to a commit sha published by .github/workflows/image.yml}
+    # build: .
+    restart: unless-stopped
+    logging: *logging
+    env_file: .env
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      # The edge Caddy is always the single hop in front of the app - see
+      # compose.edge.yml - so the client address is the last X-Forwarded-For entry.
+      # Left unset, the rate limiter would see Caddy's address for everyone and limit
+      # the whole site as one.
+      TRUSTED_PROXIES: 1
+      # Caddy forwards the original Host but the hop to the app is plain http, so a
+      # URL derived from the request would advertise og:image over http and X would
+      # drop the preview. Derived from SITE_ADDRESS unless set explicitly.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${SITE_ADDRESS}}
+    volumes:
+      # The app runs as the image's `bun` user (uid 1000), so these directories have to
+      # be writable by it on the host: `sudo chown -R 1000:1000 ./data ./backups` once,
+      # before the first start. Left root-owned, the container starts and then cannot
+      # open the database.
+      - ./data:/app/data
+      # Separate from ./data on purpose. Point this at another disk - or rsync it off
+      # the host - and the backups survive something the database does not.
+      - ./backups:/app/backups
+    # Both follow PORT, which is read from the same .env the app gets through env_file
+    # above. Pinned separately they were a third and fourth copy of the number, so
+    # moving the app broke the healthcheck and the edge's upstream at the same time.
+    expose:
+      - "${PORT:-3000}"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "process.exit(await fetch('http://localhost:${PORT:-3000}/health').then(r => r.ok ? 0 : 1).catch(() => 1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Reached by the edge Caddy across the shared network, by this alias rather than by
+    # the service name. `app` is what half the compose files on a machine call their
+    # application container, and the first collision would be Caddy quietly proxying
+    # outmine's hostname at somebody else's process. See compose.edge.yml.
+    networks:
+      edge:
+        aliases:
+          - outmine
+
+# Created once with `docker network create edge`, and owned by neither stack - see the
+# header of compose.edge.yml.
+networks:
+  edge:
+    external: true

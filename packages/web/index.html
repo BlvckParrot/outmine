@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Everything between these two markers is replaced per request: the server knows
+         which page was asked for and this file cannot. A span rather than a point,
+         because a document gets one <title> and one description - injecting them and
+         leaving these in place would ship two of each and let a parser pick.
+
+         What is written here is what Vite serves in development, where there is no
+         server to do the replacing and nothing crawls it anyway. -->
+    <!--og-->
+    <title>outmine — the board you pay for with CPU</title>
+    <meta name="description" content="A public leaderboard where rank is bought with browser mining instead of money." />
+    <meta property="og:title" content="outmine" />
+    <meta property="og:description" content="A leaderboard you cannot buy. Rank is paid in CPU time - pick a listing and mine for it." />
+    <!--/og-->
+
+    <!-- The product lives on shared links; without these a shared URL renders as a
+         dead grey box, which costs reach rather than looking untidy. These three are
+         the same on every page and need no origin to write, so they stay out of the
+         replaced span. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="outmine" />
+    <meta property="og:locale" content="en" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#fffcf5" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!-- Body text on every page, so it is worth the connection ahead of the CSS
+         finishing. The other three faces load on demand through unicode-range. -->
+    <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
+
+    <!-- Before the first paint, or a stored dark theme flashes white on load. Inline,
+         so the server's CSP has to vouch for it: the nonce placeholder is filled in per
+         request alongside the og tags above. Vite leaves the attribute alone and serves
+         this file unrewritten in development, where there is no CSP to satisfy. -->
+    <script nonce="__CSP_NONCE__">
+      try {
+        if (localStorage.getItem("outmine:theme") === "dark") {
+          document.documentElement.classList.add("dark");
+          document.querySelector('meta[name="theme-color"]').content = "#14100c";
+        }
+      } catch (e) {} // private mode: light theme, everything else still works
+    </script>
+
+    <!-- Replaced per request with the analytics tag, or with nothing at all when
+         ANALYTICS_ORIGIN and ANALYTICS_SITE_ID are not both set - which is what a dev
+         tree and a plain deployment both get. Filled in by the same pass as the nonce
+         above; Vite serves this file unrewritten, so in development it stays a
+         comment. -->
+    <!--analytics-->
+
+    <!-- Settings for the browser error reporter, replaced per request and empty unless
+         all three OBSERVE_* variables are set. Data and not code: application/json is
+         never executed, so it needs no nonce and no CSP directive widens for it. -->
+    <!--observe-->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

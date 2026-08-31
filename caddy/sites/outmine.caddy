@@ -1,0 +1,48 @@
+# One hostname, or the same board indexes twice and the two copies split whatever
+# ranking either would have had on its own. Permanent, so it is the apex that
+# accumulates it. Harmless when SITE_ADDRESS is localhost - nothing resolves www.localhost.
+www.{$SITE_ADDRESS:localhost} {
+	redir https://{$SITE_ADDRESS:localhost}{uri} permanent
+}
+
+# Replace with your domain; Caddy then gets a certificate on its own.
+{$SITE_ADDRESS:localhost} {
+	encode zstd gzip
+
+	# Access log. Caddy 2 keeps per-site logging off unless a site block asks for it, so
+	# without this there is no record of what reached the edge - no 4xx or 5xx rate, and
+	# nothing to line up against a ws_origin_rejected or a rate-limit refusal in the app.
+	log {
+		output stdout
+		format json
+	}
+
+	# Everything Bun answers from its native routes - see staticRoutes in server.ts -
+	# skips Hono, and therefore skips the app's secureHeaders. That is every file at the
+	# root of dist as well as the two directories: the WASM miner, its glue and the
+	# favicon. nosniff has to come from here for all of them, and it matters most for
+	# the one the CSP's script-src 'self' would otherwise be asked to vouch for.
+	#
+	# robots.txt is not here any more: it goes through Hono so the server can append an
+	# absolute Sitemap: line, which means it already gets secureHeaders.
+	@static path /assets/* /fonts/* /mine-* /favicon.svg
+	header @static X-Content-Type-Options "nosniff"
+
+	# The frontend build is content-hashed by Vite, so a file at one of these paths never
+	# changes - a new build is a new name. Bun already answers 304 for them; this is what
+	# stops the browser asking at all. The WASM is deliberately not here: its name does
+	# not change between builds, so an immutable year would outlive the file.
+	@immutable path /assets/* /fonts/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+	# WebSockets need no special config in Caddy 2 - reverse_proxy upgrades them.
+	#
+	# `outmine` is the network alias docker-compose.yml gives the app container, not its
+	# service name. The edge Caddy resolves names across a network shared by every stack
+	# on the machine, where `app` is whatever won the race to be called that.
+	#
+	# PORT is the app's, not Caddy's, and both read it from the same .env - so moving the
+	# app is one edit rather than four that have to agree. Caddy substitutes {$PORT}
+	# textually before parsing, so it is as valid here as in a site address.
+	reverse_proxy outmine:{$PORT:3000}
+}

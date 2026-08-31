@@ -1,0 +1,6 @@
+[submodule "packages/wasm/vendor/cpuminer-multi"]
+	path = packages/wasm/vendor/cpuminer-multi
+	url = https://github.com/litecoincash-project/cpuminer-multi.git
+[submodule "packages/wasm/vendor/cpuminer-opt-rin"]
+	path = packages/wasm/vendor/cpuminer-opt-rin
+	url = https://github.com/Rin-coin/cpuminer-opt-rin.git

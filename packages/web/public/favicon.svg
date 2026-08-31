@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#14100c"/>
+  <!-- A pickaxe: handle, head, and the strut between them. The strut is what keeps it
+       from reading as a check mark once the browser has scaled it down to 16px. -->
+  <g fill="none" stroke="#e0a53a" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 26 L20 13"/>
+    <path d="M13 6 A 13 13 0 0 1 27 20"/>
+    <path d="M15.5 8.5 L24.5 17.5"/>
+  </g>
+</svg>

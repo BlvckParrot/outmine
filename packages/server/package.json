@@ -1,0 +1,20 @@
+{
+  "name": "@outmine/server",
+  "version": "0.0.0",
+  "private": true,
+  "license": "GPL-2.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --env-file=../../.env --watch src/server.ts",
+    "start": "bun --env-file=../../.env src/server.ts"
+  },
+  "dependencies": {
+    "@outmine/protocol": "workspace:*",
+    "@resvg/resvg-js": "^2.6.2",
+    "hono": "^4.13.3",
+    "hono-rate-limiter": "^0.5.3"
+  },
+  "devDependencies": {
+    "@outmine/wasm": "workspace:*"
+  }
+}

@@ -1,0 +1,138 @@
+# Builds the container image and pushes it to GHCR, so the host only ever pulls.
+#
+# Not built on the server on purpose. The wasm stage pulls emscripten/emsdk (~2 GB) and
+# compiles roughly 35 C translation units at -O3 on a single thread, which is a long
+# time and a lot of disk on the smallest VPS.
+#
+# The miner's upstream sources are submodules, so the image job checks out recursively
+# and the build context carries them at the commits this repository pins. build.sh does
+# no fetching at all; without the submodules it fails with the command to run.
+#
+# Every `uses:` below is pinned to a commit, with the version it was in the comment. A
+# major tag is a moving pointer at somebody else's repository, and the image job holds
+# packages: write plus GITHUB_TOKEN - so whoever can move that tag can push an image the
+# host will pull. Dependabot (.github/dependabot.yml) rewrites both the sha and the
+# comment, which is what keeps a hard pin from turning into an old one.
+name: image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # Gate. Pushing a tagged image that does not typecheck is worse than not pushing one.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      # Everything except packages/wasm. mine.test.ts imports the compiled glue at module
+      # scope (see createModule in packages/wasm/module.ts), so it needs a full emscripten
+      # build to even load - which is the job below, and not worth doing twice. Those
+      # vectors are what `bun test` covers locally after build.sh has run.
+      - run: bun test packages/server packages/web packages/protocol
+
+  image:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        # The wasm stage compiles from packages/wasm/vendor, which are submodules. Without
+        # this the build context has empty directories and build.sh stops the build.
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: true
+          # The deployment target is an Oracle Ampere A1, which is arm64, and an amd64-only
+          # image fails its `docker compose pull` with "no matching manifest". amd64 stays
+          # in the list so an x86 host is still one `pull` away if this one has to move.
+          #
+          # This costs almost nothing: the two expensive stages are pinned to
+          # $BUILDPLATFORM in the Dockerfile and are shared between the two, so only the
+          # runtime stage - a `bun install` of prebuilt binaries - is built twice.
+          platforms: linux/amd64,linux/arm64
+          # Lowercase and spelled out rather than ${{ github.repository }}: GHCR rejects
+          # an uppercase path, and the repository name carries its capitals.
+          tags: |
+            ghcr.io/blvckparrot/outmine:latest
+            ghcr.io/blvckparrot/outmine:${{ github.sha }}
+          # The wasm layer keys on `COPY packages/wasm`, submodule contents included, so
+          # any build that does not touch the miner skips the emcc run entirely - and a
+          # submodule bump is exactly what should invalidate it.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # The host used to be updated by hand: paste the new sha into .env, pull, up. That is
+  # a step that gets skipped, and a machine running a build nobody can name is how a
+  # rollback stops being possible.
+  #
+  # Only ever runs after `image`, so what it names is a tag that exists. `check` gates
+  # `image`, so it is also a build that typechecks and passes its tests.
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Two pushes in quick succession would otherwise race, and the loser would be the
+    # one that finished second - which is not the one that is newer. Queued, not
+    # cancelled: a half-applied deploy is worse than a slow one.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        # No submodules here. This job ships two text files; the miner is already inside
+        # the image the previous job pushed.
+
+      - name: Deploy
+        # Secrets rather than variables, and read as shell variables rather than
+        # interpolated into the script: `${{ }}` is substituted before the shell sees it,
+        # and this repository's Actions logs are public, so a variable would simply print
+        # the host back out. GitHub masks a secret to *** wherever it appears.
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          install -m600 /dev/null key
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > key
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > known_hosts
+          # The host key is pinned from a secret rather than accepted on first sight.
+          # ssh-keyscan here would mean every run trusting whoever answered, which is
+          # the hole known_hosts exists to close.
+          #
+          # The key on the far side carries a forced command (see /srv/outmine/deploy.sh
+          # and the command= prefix in authorized_keys), so this is the only thing it can
+          # do: the sha arrives as the requested command, the two files on stdin. There
+          # is no scp because there does not need to be.
+          #
+          # Addressed by name, not by address: the instance's public IP is ephemeral.
+          tar -czf - docker-compose.yml caddy/sites/outmine.caddy \
+            | ssh -i key \
+                  -o UserKnownHostsFile=known_hosts \
+                  -o IdentitiesOnly=yes \
+                  -o StrictHostKeyChecking=yes \
+                  "$DEPLOY_USER@$DEPLOY_HOST" "$GITHUB_SHA"
+
+      # From outside, over the real hostname. `docker compose up --wait` on the far side
+      # already waited for the container's own healthcheck; this is the half that check
+      # cannot see - DNS, the edge Caddy, the certificate, the route to the app.
+      - name: Check the site from outside
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: curl -fsS --max-time 20 "https://$DEPLOY_HOST/health" | grep -q '"ok":true'

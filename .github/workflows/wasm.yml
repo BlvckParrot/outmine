@@ -1,0 +1,46 @@
+# The vector test, run against a real emscripten build.
+#
+# It runs nowhere else. image.yml's check job excludes packages/wasm on purpose -
+# mine.test.ts imports the compiled glue at module scope, so it needs a full build to even
+# load - and the image job builds the miner without ever testing it. So the one check that
+# catches "the WASM mines garbage the pool will reject" was missing from the pipeline that
+# produces the WASM.
+#
+# Path-filtered because it is expensive (the emsdk image is ~2 GB) and because a submodule
+# bump changes a path under packages/wasm, which is the only way the hashes can move.
+#
+# Deliberately not a `needs:` gate on the image job: gating would pull emsdk on every push
+# to main. The trade is that an image can publish while this is red. Worth revisiting if
+# the pins start moving often.
+name: wasm
+
+on:
+  push:
+    paths:
+      - "packages/wasm/**"
+      - ".github/workflows/wasm.yml"
+  pull_request:
+    paths:
+      - "packages/wasm/**"
+  workflow_dispatch:
+
+jobs:
+  vectors:
+    runs-on: ubuntu-latest
+    # Identical to the wasm stage in the Dockerfile, and has to stay that way: the
+    # vectors below are the only check on the miner, and checking them under a different
+    # emcc than the one that builds the shipped image checks nothing that ships.
+    container: emscripten/emsdk:4.0.7
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: packages/wasm/build.sh
+      # Inside emsdk there is no system clang, so build.sh skips the native reference and
+      # this compares the WASM against the vectors committed in mine.test.ts - which is the
+      # comparison that matters here: they are what a pin bump would have to change.
+      - run: bun test packages/wasm

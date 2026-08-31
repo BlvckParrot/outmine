@@ -1,0 +1,30 @@
+# Pins do not maintain themselves. Everything this repository ships is fixed to an exact
+# version - bun.lock, the submodule gitlinks, the base images, every action sha - which
+# means an upstream security fix sits outside until somebody moves a pin. Nobody was
+# going to notice. This is what notices.
+#
+# Monthly rather than weekly: none of these move often, and a PR nobody reads is a pin
+# nobody moves either.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    # Rewrites the sha and the `# vX.Y.Z` comment beside it together, so the pins in
+    # image.yml and wasm.yml stay readable as versions while staying hard as commits.
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: monthly
+    ignore:
+      # emscripten/emsdk is pinned in two files that have to agree: the Dockerfile builds
+      # the miner with it, wasm.yml checks the miner's output inside it. Dependabot only
+      # sees the Dockerfile, so a merged bump would leave the vectors verifying a miner
+      # built by a different compiler than the one that ships - and nothing would go red
+      # to say so. Move both by hand, in one commit.
+      - dependency-name: emscripten/emsdk

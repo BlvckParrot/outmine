@@ -1,0 +1,3 @@
+[test]
+# Points DB_PATH at a scratch file before anything imports db.ts. See the script.
+preload = ["./scripts/test-setup.ts"]
