@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { list, pattern } from "./config";
+import { BTC_ADDRESS, list, pattern } from "./config";
 
 // list() reads process.env at call time, so these set and clear one name rather than
 // importing config with an environment - the module is a singleton read once at import,
@@ -74,4 +74,35 @@ test("a site id is letters, digits, dash and underscore, and nothing else", () =
   expect(pattern("TEST_PATTERN", SITE_ID)).toBe("my-site_1");
   process.env.TEST_PATTERN = '1" data-x="';
   expect(pattern("TEST_PATTERN", SITE_ID)).toBe("");
+});
+
+// --- BTC_ADDRESS -------------------------------------------------------------------
+//
+// Imported rather than written out again, unlike ORIGIN and SITE_ID above. Those two
+// exist to exercise pattern(); this one *is* what is under test, and a copy of it here
+// would sit green while the expression config.ts actually guards the donation address
+// with rotted underneath - on the one setting where being wrong loses money.
+
+test.each([
+  ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "P2PKH, the genesis address"],
+  ["3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "P2SH"],
+  ["bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "bech32 P2WPKH"],
+  ["bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297", "bech32m taproot"],
+])("%s is accepted (%s)", (address) => {
+  process.env.TEST_PATTERN = address;
+  expect(pattern("TEST_PATTERN", BTC_ADDRESS)).toBe(address);
+});
+
+test.each([
+  ["1A1zP1eP5QGefi2DMPTfTL5S", "truncated - the failure a bad paste actually produces"],
+  ["bc1qar0srrr7xfkvy5l643lydnw9re59gtzz", "bech32 cut short"],
+  ["1A1zP1eP5QGefi0DMPTfTL5SLmv7DivfNa", "0, which base58 leaves out to stop it reading as O"],
+  ["1A1zP1eP5QGefI2DMPTfTL5SLmv7DivfNa", "I, left out for the same reason as l"],
+  ["bc1qbr0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "b, which is not in the bech32 alphabet"],
+  ["BC1QAR0SRRR7XFKVY5L643LYDNW9RE59GTZZWF5MDQ", "upper case, which no wallet emits"],
+  ["4A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "no mainnet address starts with 4"],
+  ["not-an-address", "prose"],
+])("%s is refused (%s)", (address) => {
+  process.env.TEST_PATTERN = address;
+  expect(pattern("TEST_PATTERN", BTC_ADDRESS)).toBe("");
 });

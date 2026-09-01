@@ -18,6 +18,7 @@ import { Listing } from "./pages/Listing";
 import { Prose } from "./pages/Prose";
 import { Rules } from "./pages/Rules";
 import { Stats } from "./pages/Stats";
+import { Support } from "./pages/Support";
 import { linkProps, usePath } from "./router";
 import { SessionContext } from "./session";
 import type { Owned } from "./storage";
@@ -145,6 +146,7 @@ function Page({ path }: { path: string }) {
     case "/rules": return <Rules />;
     case "/faq": return <Faq />;
     case "/stats": return <Stats />;
+    case "/support": return <Support />;
     default: return <Home />;
   }
 }

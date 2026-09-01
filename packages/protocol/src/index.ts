@@ -207,6 +207,11 @@ export const PAGES = {
     description:
       "Every share, point and outbound click this site has spent of other people's CPU, in public and live.",
   },
+  "/support": {
+    title: "Support this — outmine",
+    description:
+      "What running this costs, where the mining revenue already goes, and the two ways to chip in if you want to.",
+  },
 } as const satisfies Record<string, PageMeta>;
 
 export type PagePath = keyof typeof PAGES;

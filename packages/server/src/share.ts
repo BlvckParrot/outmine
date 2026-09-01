@@ -52,6 +52,9 @@ export const ANALYTICS_MARKER = "<!--analytics-->";
 /** Where the browser error reporter's settings go, when there are any. */
 export const OBSERVE_MARKER = "<!--observe-->";
 
+/** Where /support gets the addresses it asks for money with, when there are any. */
+export const DONATE_MARKER = "<!--donate-->";
+
 /** All three or none - see config.observe, which also explains why the token in here
  *  is not a secret. Exported because routes.ts asks the same question of the CSP:
  *  the origin belongs in connect-src exactly when the page will post to it. */
@@ -86,6 +89,20 @@ const observeConfig = observeConfigured()
     })}</script>`
   : "";
 
+/** What /support puts on the page, as data, for the same reason and with the same
+ *  safety as observeConfig above: not executed, so no nonce and no widened directive,
+ *  and both values are held to a shape in config.ts that admits no `<`.
+ *
+ *  Emitted when either half is set rather than when both are - unlike the reporter,
+ *  which is useless with two of its three. An address without a sponsors handle is a
+ *  perfectly good donate page. */
+const donateConfig = config.donate.btc || config.donate.sponsors
+  ? `<script type="application/json" id="donate-config">${JSON.stringify({
+      btc: config.donate.btc,
+      sponsors: config.donate.sponsors,
+    })}</script>`
+  : "";
+
 /** index.html with every per-request placeholder filled. Replacements are given as
  *  functions: $&, $` and $' are replacement patterns, and a nonce is base64, which
  *  contains neither - but the analytics tag is built from configuration, and the day
@@ -95,7 +112,8 @@ export const fillMarkers = (c: Context, html: string) =>
   html
     .replaceAll(NONCE_MARKER, () => c.get("secureHeadersNonce") ?? "")
     .replaceAll(ANALYTICS_MARKER, () => analyticsTag)
-    .replaceAll(OBSERVE_MARKER, () => observeConfig);
+    .replaceAll(OBSERVE_MARKER, () => observeConfig)
+    .replaceAll(DONATE_MARKER, () => donateConfig);
 
 const detailOf = (id: string): ListingDetail | null => {
   const listing = getListing(id);

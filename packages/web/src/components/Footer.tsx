@@ -24,6 +24,8 @@ export function Footer() {
         <span aria-hidden>·</span>
         <a {...linkProps("/stats")} className="text-primary hover:underline">Stats</a>
         <span aria-hidden>·</span>
+        <a {...linkProps("/support")} className="text-primary hover:underline">Support</a>
+        <span aria-hidden>·</span>
         {/* The link that leaves the site. GPL-2.0 asks anyone running this to point at
             the source, and a visitor being asked for their CPU has earned the right to
             go and read what it does. */}

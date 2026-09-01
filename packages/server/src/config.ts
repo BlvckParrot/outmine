@@ -73,6 +73,20 @@ export function pattern(name: string, re: RegExp): string {
   return raw;
 }
 
+/** A Bitcoin mainnet address: base58 for the two legacy forms, bech32 for segwit and
+ *  taproot. Exported so config.test.ts checks this expression rather than a copy of it
+ *  - the two regular expressions the test writes out itself are there to exercise
+ *  pattern(), but this one *is* the thing being tested, and a stale copy would stay
+ *  green against a broken account number.
+ *
+ *  ponytail: shape only, no checksum. This catches a truncated or mangled address and
+ *  not a typo that happens to stay well-formed. The real check is that the operator
+ *  reads the address back off their own /support page, which they will do once; a
+ *  bech32 polymod would be thirty lines guarding a case a pair of eyes already sees.
+ *  Add it if this ever gets set by anything other than a person pasting once. */
+export const BTC_ADDRESS =
+  /^(bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38,68}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
+
 /** The category /rules names first. A setting rather than a list baked into the source:
  *  what belongs on a public board is the operator's policy and moves without a deploy,
  *  and BLOCKED_WORDS replaces this entirely rather than adding to it. */
@@ -147,6 +161,25 @@ export const config = {
     origin: pattern("OBSERVE_ORIGIN", /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i),
     org: pattern("OBSERVE_ORG", /^[A-Za-z0-9_-]{1,64}$/),
     publicToken: pattern("OBSERVE_PUBLIC_TOKEN", /^[A-Za-z0-9_.=+/-]{1,256}$/),
+  },
+
+  /** How /support asks for money, or nothing at all. Either half may stand alone, and
+   *  with both empty the page says donations are not being taken rather than 404ing.
+   *
+   *  Configuration and not a constant for the same reason DEPLOY_HOST is a secret and
+   *  SITE_URL is a variable: this repository is public and names no single deployment.
+   *  A fork that begged for money into this address would be a bug, and one nobody
+   *  running it would notice.
+   *
+   *  No default from pool.user, which is already a payout address. Publishing the
+   *  address an operator set up to be *paid* is a surprising thing to do on their
+   *  behalf; if they are the same address, let them say so twice. */
+  donate: {
+    btc: pattern("DONATE_BTC", BTC_ADDRESS),
+    /** A username, not a URL - the narrower shape is the one worth checking, and the
+     *  link is built from it. GitHub's own limit is 39 characters, alphanumeric and
+     *  dashes, no dash at either end. */
+    sponsors: pattern("DONATE_GITHUB_SPONSORS", /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/),
   },
 
   /** Where the frontend build lives. Resolved from this file so any working directory

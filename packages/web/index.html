@@ -57,6 +57,11 @@
          all three OBSERVE_* variables are set. Data and not code: application/json is
          never executed, so it needs no nonce and no CSP directive widens for it. -->
     <!--observe-->
+
+    <!-- The addresses /support asks for money with, replaced per request and empty
+         unless DONATE_BTC or DONATE_GITHUB_SPONSORS is set. Data, not code, for the
+         same reason as the block above. -->
+    <!--donate-->
   </head>
   <body>
     <div id="root"></div>
