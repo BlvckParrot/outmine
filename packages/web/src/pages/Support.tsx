@@ -24,34 +24,27 @@ export function Support() {
   return (
     <Prose title="Support this">
       <p>
-        This runs on one small server and the mining already pays for part of it — the work goes
-        to a pool that credits the site owner, which{" "}
+        This runs on one small server and the mining already pays for part of it
+        — the work goes to a pool that credits the site owner, which{" "}
         <a {...linkProps("/faq")}>the FAQ</a> says out loud and{" "}
-        <a {...linkProps("/stats")}>the stats page</a> counts in public. So this is not a
-        collection tin for something with no income. It is a way to chip in if the thing amused
-        you, and nothing on the board is for sale either way: a donation buys no rank, no
-        placement and no exception to <a {...linkProps("/rules")}>the rules</a>.
+        <a {...linkProps("/stats")}>the stats page</a> counts in public. So this
+        is not a collection tin for something with no income. It is a way to
+        chip in if the thing amused you, and nothing on the board is for sale
+        either way: a donation buys no rank, no placement and no exception to{" "}
+        <a {...linkProps("/rules")}>the rules</a>.
       </p>
 
       {!btc ? (
-        <p>Whoever runs this instance has not set up any way to take donations.</p>
+        <p>
+          Whoever runs this instance has not set up any way to take donations.
+        </p>
       ) : (
         <>
           <h2>Bitcoin</h2>
           <p>
-            The same address the pool pays into, so a donation and a share you mined land in
-            exactly the same place. There is no second pot and no separate accounting.
+            You can send BTC do the following adress to support this project.
           </p>
           <Address value={btc} />
-
-          <h2>Why there is no card button</h2>
-          <p>
-            Not an oversight. Stripe lists cryptocurrency mining among the businesses it will not
-            serve, and every card-based donation platform — GitHub Sponsors, Ko-fi, Liberapay,
-            Open Collective — settles through Stripe or PayPal. This site mines cryptocurrency.
-            An address needs nobody's permission, which on this particular site is rather the
-            point.
-          </p>
         </>
       )}
     </Prose>
@@ -74,10 +67,15 @@ function Address({ value }: { value: string }) {
       </code>
       <button
         onClick={() => {
-          navigator.clipboard?.writeText(value).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }).catch(() => {/* clipboard is blocked; the address is on screen anyway */});
+          navigator.clipboard
+            ?.writeText(value)
+            .then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            })
+            .catch(() => {
+              /* clipboard is blocked; the address is on screen anyway */
+            });
         }}
         className="shrink-0 cursor-pointer rounded-full border border-border px-4 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
       >
