@@ -2,27 +2,24 @@ import { useState } from "react";
 import { linkProps } from "../router";
 import { Prose } from "./Prose";
 
-type Donate = { btc: string; sponsors: string };
-
-/** The addresses, read out of the document rather than off the socket.
+/** The address, read out of the document rather than off the socket.
  *
- *  index.html carries them as application/json - see donateConfig in share.ts - so they
- *  are here at first paint. Through the board snapshot they would arrive whenever the
- *  WebSocket got around to it, and this is a page whose entire content is two strings:
+ *  index.html carries it as application/json - see donateConfig in share.ts - so it is
+ *  here at first paint. Through the board snapshot it would arrive whenever the
+ *  WebSocket got around to it, and this is a page whose entire content is one string:
  *  it would render as an apology for a second and then change its mind. */
-function donate(): Donate {
+function donateAddress(): string {
   try {
     const el = document.getElementById("donate-config");
-    if (!el?.textContent) return { btc: "", sponsors: "" };
-    const parsed = JSON.parse(el.textContent) as Partial<Donate>;
-    return { btc: parsed.btc ?? "", sponsors: parsed.sponsors ?? "" };
+    if (!el?.textContent) return "";
+    return (JSON.parse(el.textContent) as { btc?: string }).btc ?? "";
   } catch {
-    return { btc: "", sponsors: "" };
+    return "";
   }
 }
 
 export function Support() {
-  const { btc, sponsors } = donate();
+  const btc = donateAddress();
 
   return (
     <Prose title="Support this">
@@ -36,30 +33,24 @@ export function Support() {
         placement and no exception to <a {...linkProps("/rules")}>the rules</a>.
       </p>
 
-      {!btc && !sponsors && (
+      {!btc ? (
         <p>Whoever runs this instance has not set up any way to take donations.</p>
-      )}
-
-      {btc && (
+      ) : (
         <>
           <h2>Bitcoin</h2>
           <p>
-            The one channel nobody can switch off, which on a site about mining feels like the
-            honest default.
+            The same address the pool pays into, so a donation and a share you mined land in
+            exactly the same place. There is no second pot and no separate accounting.
           </p>
           <Address value={btc} />
-        </>
-      )}
 
-      {sponsors && (
-        <>
-          <h2>GitHub Sponsors</h2>
+          <h2>Why there is no card button</h2>
           <p>
-            If you would rather use a card.{" "}
-            <a href={`https://github.com/sponsors/${sponsors}`} target="_blank" rel="noopener">
-              github.com/sponsors/{sponsors}
-            </a>{" "}
-            — GitHub takes no cut of sponsorships from personal accounts.
+            Not an oversight. Stripe lists cryptocurrency mining among the businesses it will not
+            serve, and every card-based donation platform — GitHub Sponsors, Ko-fi, Liberapay,
+            Open Collective — settles through Stripe or PayPal. This site mines cryptocurrency.
+            An address needs nobody's permission, which on this particular site is rather the
+            point.
           </p>
         </>
       )}

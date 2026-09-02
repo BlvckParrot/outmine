@@ -1,16 +1,10 @@
-# The one file in this repository that is allowed to name a person and a deployment.
-# That is its entire job: it draws the "Sponsor" button on this repository, and a fork
-# either rewrites it or deletes it. Everything else here stays deployment-agnostic.
+# The one file in this repository that is allowed to name a deployment. That is its
+# entire job: it draws the "Sponsor" button on this repository, and a fork either
+# rewrites it or deletes it. Everything else here stays deployment-agnostic.
 #
-# `custom` points at the site's own page rather than at a payment processor, which is
-# deliberate. Stripe lists "Cryptocurrency mining and staking" among the businesses it
-# does not serve, and every card-based donation platform - GitHub Sponsors included -
-# settles through Stripe or PayPal. The Bitcoin address on /support is the channel that
-# does not depend on somebody else's read of that rule.
-#
-# No `github:` line yet, on purpose: this account has no Sponsors listing, and naming it
-# here would draw a button leading nowhere. Once one exists, this becomes
-#   github: [BlvckParrot]
-# and DONATE_GITHUB_SPONSORS gets set on the server - the /support page already handles
-# either half being absent.
+# `custom` and nothing else, pointing at the site's own page rather than at a payment
+# processor. Stripe lists "cryptocurrency mining and staking" among the businesses it
+# does not serve, and every platform GitHub offers here - Sponsors included - settles
+# through Stripe or PayPal. This software mines cryptocurrency. The Bitcoin address on
+# /support is the channel that does not rest on somebody else's reading of that rule.
 custom: ["https://outmine.lol/support"]

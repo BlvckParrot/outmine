@@ -163,23 +163,26 @@ export const config = {
     publicToken: pattern("OBSERVE_PUBLIC_TOKEN", /^[A-Za-z0-9_.=+/-]{1,256}$/),
   },
 
-  /** How /support asks for money, or nothing at all. Either half may stand alone, and
-   *  with both empty the page says donations are not being taken rather than 404ing.
+  /** Where /support asks people to send money, or nothing at all - empty means the page
+   *  says donations are not being taken rather than 404ing.
+   *
+   *  Bitcoin and nothing else, deliberately. Stripe lists "cryptocurrency mining and
+   *  staking" among businesses it does not serve, and every card-based donation
+   *  platform - GitHub Sponsors, Ko-fi, Liberapay, Open Collective - settles through
+   *  Stripe or PayPal. This software mines cryptocurrency. An address cannot be
+   *  reviewed, frozen or reconsidered, which on this particular site is the point.
    *
    *  Configuration and not a constant for the same reason DEPLOY_HOST is a secret and
    *  SITE_URL is a variable: this repository is public and names no single deployment.
    *  A fork that begged for money into this address would be a bug, and one nobody
    *  running it would notice.
    *
-   *  No default from pool.user, which is already a payout address. Publishing the
-   *  address an operator set up to be *paid* is a surprising thing to do on their
-   *  behalf; if they are the same address, let them say so twice. */
+   *  No default from pool.user, even though this deployment sets both to the same
+   *  address. Publishing the address an operator set up to be *paid* is a surprising
+   *  thing to do on their behalf - and the two are free to differ, so a deployment that
+   *  wants them equal says so twice rather than being unable to separate them. */
   donate: {
     btc: pattern("DONATE_BTC", BTC_ADDRESS),
-    /** A username, not a URL - the narrower shape is the one worth checking, and the
-     *  link is built from it. GitHub's own limit is 39 characters, alphanumeric and
-     *  dashes, no dash at either end. */
-    sponsors: pattern("DONATE_GITHUB_SPONSORS", /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/),
   },
 
   /** Where the frontend build lives. Resolved from this file so any working directory

@@ -91,15 +91,10 @@ const observeConfig = observeConfigured()
 
 /** What /support puts on the page, as data, for the same reason and with the same
  *  safety as observeConfig above: not executed, so no nonce and no widened directive,
- *  and both values are held to a shape in config.ts that admits no `<`.
- *
- *  Emitted when either half is set rather than when both are - unlike the reporter,
- *  which is useless with two of its three. An address without a sponsors handle is a
- *  perfectly good donate page. */
-const donateConfig = config.donate.btc || config.donate.sponsors
+ *  and the value is held to a shape in config.ts that admits no `<`. */
+const donateConfig = config.donate.btc
   ? `<script type="application/json" id="donate-config">${JSON.stringify({
       btc: config.donate.btc,
-      sponsors: config.donate.sponsors,
     })}</script>`
   : "";
 
