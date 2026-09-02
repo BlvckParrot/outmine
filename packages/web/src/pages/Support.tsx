@@ -42,7 +42,7 @@ export function Support() {
         <>
           <h2>Bitcoin</h2>
           <p>
-            You can send BTC do the following adress to support this project.
+            You can send BTC to the following adress to support this project.
           </p>
           <Address value={btc} />
         </>
