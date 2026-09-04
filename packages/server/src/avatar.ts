@@ -2,9 +2,14 @@ import { config } from "./config";
 import { checkedIcon } from "./listings";
 
 const FETCH_TIMEOUT_MS = 5_000;
-// A real X avatar can be a few hundred KB; well over listings.checkedIcon's default
-// 64 KiB upload ceiling, which was tuned for the manual-upload UX, not a fetched photo.
+// A real X avatar can be a few hundred KB, well over listings.checkedIcon's default
+// 64 KiB upload ceiling (tuned for the manual-upload UX, not a fetched photo), and its
+// pixel dimensions are never pre-shrunk client-side the way a manual upload's are -
+// unavatar.io has been seen serving 200x200, X itself goes up to a few hundred more.
+// Both ceilings are still bounded, just sized for a real photo instead of a canvas
+// export capped at ICON_MAX_PX.
 const MAX_AVATAR_BYTES = 1024 * 1024;
+const MAX_AVATAR_PIXELS = 2048 ** 2;
 
 /** The X/Twitter avatar for a handle, resized and re-encoded exactly like an uploaded
  *  icon - or null for anything short of success. Best-effort on purpose: a listing is
@@ -29,7 +34,7 @@ export async function fetchHandleAvatar(
     });
     if (!res.ok) return null;
     const bytes = new Uint8Array(await res.arrayBuffer());
-    return await checkedIcon(bytes, MAX_AVATAR_BYTES);
+    return await checkedIcon(bytes, { maxBytes: MAX_AVATAR_BYTES, maxPixels: MAX_AVATAR_PIXELS });
   } catch {
     return null;
   }

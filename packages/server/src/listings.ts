@@ -180,14 +180,17 @@ const text = (value: unknown, field: string): string => {
  *  the point: it is a document with scripts in it and this one would be same-origin.
  *
  *  maxPixels is the decompression-bomb guard and is checked before the decode, so a few
- *  hundred bytes on the wire cannot ask for gigabytes of pixels.
+ *  hundred bytes on the wire cannot ask for gigabytes of pixels. It defaults to exactly
+ *  ICON_MAX_PX squared because the browser already redraws every manual upload onto a
+ *  128px canvas before sending - the one caller that needs more room (a fetched avatar,
+ *  never downsized client-side) passes its own.
  *
  *  Both WebP encoders run because neither wins twice. A flat logo - the common case -
  *  goes to a third of PNG losslessly, and lossy would only fray its edges. A photograph
  *  goes the other way: lossless barely beats PNG, quality 90 is six times smaller. */
 export async function checkedIcon(
   bytes: Uint8Array,
-  maxBytes = config.limits.maxIconBytes,
+  { maxBytes = config.limits.maxIconBytes, maxPixels = ICON_MAX_PX ** 2 } = {},
 ): Promise<Uint8Array> {
   if (bytes.length > maxBytes) throw new TargetError("That icon is too large.");
 
@@ -195,7 +198,7 @@ export async function checkedIcon(
   // and sharing it makes the second webp() hand back the first one's bytes without an
   // error, which turns the comparison below into a coin flip.
   const fitted = () =>
-    new Bun.Image(bytes, { maxPixels: ICON_MAX_PX ** 2 })
+    new Bun.Image(bytes, { maxPixels })
       .resize(ICON_MAX_PX, ICON_MAX_PX, { fit: "inside", withoutEnlargement: true });
 
   let lossless: Uint8Array;
