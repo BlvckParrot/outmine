@@ -185,6 +185,14 @@ export const config = {
     btc: pattern("DONATE_BTC", BTC_ADDRESS),
   },
 
+  /** Where a fresh @handle listing's avatar is fetched from, or nothing at all - unset
+   *  means the feature is off, same as analytics and observe above. Point this at
+   *  https://unavatar.io (or a self-hosted microlinkhq/unavatar instance) to have new
+   *  handle listings get their real X profile photo instead of a letter placeholder. */
+  avatar: {
+    proxyOrigin: pattern("AVATAR_PROXY_ORIGIN", /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i),
+  },
+
   /** Where the frontend build lives. Resolved from this file so any working directory
    *  works; the image overrides it when the layout differs. */
   webDist: process.env.WEB_DIST?.trim() || new URL("../../web/dist", import.meta.url).pathname,

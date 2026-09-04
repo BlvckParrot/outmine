@@ -14,6 +14,7 @@ import {
   type BoardPageResponse, type ListingDetail, type ListingKind, type StatsResponse,
   type TrendingItem,
 } from "@outmine/protocol";
+import { fetchHandleAvatar } from "./avatar";
 import { config } from "./config";
 import { dbAlive, type Listing } from "./db";
 import {
@@ -21,8 +22,8 @@ import {
 } from "./hub";
 import {
   AuthError, boardTotals, countClick, createListing, deleteListing, getIcon, getListing,
-  listingRank, searchBoard, setIcon, TargetError, trafficByDay, trafficListings, trafficTop,
-  trending, updateListing, visitsToday,
+  listingRank, searchBoard, setHandleAvatar, setIcon, TargetError, trafficByDay,
+  trafficListings, trafficTop, trending, updateListing, visitsToday,
 } from "./listings";
 import { log, makeThrottledLog } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
@@ -304,6 +305,19 @@ app.post("/api/listings", newListingLimit, boundedBody(config.limits.maxBodyByte
     const { listing, editToken } = createListing(c.req.valid("json"));
     pushFeed(`${listing.name} joined and needs hashes`);
     log("listing_created", { id: listing.id, target: listing.target });
+
+    // Fire-and-forget: the response never waits on a third party. Best-effort, so a
+    // failed or unconfigured fetch just leaves today's letter placeholder in place.
+    if (listing.kind === "handle") {
+      fetchHandleAvatar(listing.target)
+        .then((icon) => {
+          if (!icon) return;
+          setHandleAvatar(listing.id, icon);
+          log("listing_avatar_set", { id: listing.id });
+        })
+        .catch(() => {});
+    }
+
     // The edit token is returned once here and only its hash is stored.
     return c.json({ listing, editToken }, 201);
   } catch (err) {

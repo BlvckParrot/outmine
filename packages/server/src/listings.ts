@@ -185,8 +185,11 @@ const text = (value: unknown, field: string): string => {
  *  Both WebP encoders run because neither wins twice. A flat logo - the common case -
  *  goes to a third of PNG losslessly, and lossy would only fray its edges. A photograph
  *  goes the other way: lossless barely beats PNG, quality 90 is six times smaller. */
-export async function checkedIcon(bytes: Uint8Array): Promise<Uint8Array> {
-  if (bytes.length > config.limits.maxIconBytes) throw new TargetError("That icon is too large.");
+export async function checkedIcon(
+  bytes: Uint8Array,
+  maxBytes = config.limits.maxIconBytes,
+): Promise<Uint8Array> {
+  if (bytes.length > maxBytes) throw new TargetError("That icon is too large.");
 
   // One Image per encoder rather than one pipeline used twice: the pipeline is mutable,
   // and sharing it makes the second webp() hand back the first one's bytes without an
@@ -228,6 +231,12 @@ export async function setIcon(
   db.query(`UPDATE listings SET icon = ? WHERE id = ?`).run(icon, id);
   return getListing(id)!;
 }
+
+/** The auto-fetched X avatar for a fresh handle listing - applied without the points
+ *  gate that guards a manual upload, since nobody chose to spend points on it. Bytes
+ *  arrive already checked; this only writes them. */
+export const setHandleAvatar = (id: string, icon: Uint8Array) =>
+  db.query(`UPDATE listings SET icon = ? WHERE id = ?`).run(icon, id);
 
 /** The bytes, selected on their own so no other query ever carries them. */
 export const getIcon = (id: string): Uint8Array | null =>

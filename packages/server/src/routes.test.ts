@@ -103,6 +103,19 @@ test("the same target cannot be listed twice", async () => {
   expect((await second.json()).error).toBe("That target is already listed.");
 });
 
+let handles = 0;
+const uniqueHandle = () => (handles++).toString(36);
+
+test("a handle listing is created without an avatar fetch when unconfigured", async () => {
+  // No AVATAR_PROXY_ORIGIN in the test environment, so this exercises the real no-op
+  // path rather than mocking one - the same path any deployment that has not opted in
+  // takes today.
+  expect(config.avatar.proxyOrigin).toBe("");
+
+  const { listing } = await create({ kind: "handle", target: uniqueHandle(), name: "Handle" });
+  expect(listing).toMatchObject({ kind: "handle", has_icon: 0 });
+});
+
 test.each([
   ["a link shortener", { kind: "domain", target: "https://bit.ly/abc", name: "S" }],
   ["a bare host", { kind: "domain", target: "localhost", name: "S" }],
