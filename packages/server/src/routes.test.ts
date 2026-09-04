@@ -433,3 +433,24 @@ test("the card tags declare the size the card is actually drawn at", async () =>
   expect(body).toContain(`<meta property="og:image:height" content="${CARD_HEIGHT}" />`);
   expect(body).toContain('<meta property="og:image" content="http://localhost/og/home.png" />');
 });
+
+// A missing card tag is the kind of failure nothing on this side can see: the server
+// answers 200, the page is perfect, and the link just goes out flat on X or in Slack.
+// Asserting the pair here is what keeps the twitter:* block from being quietly dropped
+// as "og: covers it" - which it does on X and does not everywhere.
+test("a shared link carries a twitter card with its own title and description", async () => {
+  const home = await (await app.request("/")).text();
+  for (const tag of ["twitter:card", "twitter:title", "twitter:description", "twitter:image"]) {
+    expect(home).toContain(`name="${tag}"`);
+  }
+  // The values, not just the keys: a tag naming the wrong page is worse than none.
+  expect(home).toContain(
+    '<meta name="twitter:title" content="outmine — the board you pay for with CPU" />',
+  );
+
+  // A listing's card must be about the listing, not a second copy of the board's.
+  const { listing } = await create({ name: "Card Tags" });
+  const page = await (await app.request(`/l/${listing.id}`)).text();
+  expect(page).toContain('<meta name="twitter:title" content="Card Tags');
+  expect(page).toContain(`<meta name="twitter:image" content="http://localhost/og/${listing.id}.png" />`);
+});

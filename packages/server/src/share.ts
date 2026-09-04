@@ -212,30 +212,49 @@ share.get("/sitemap.xml", (c) => {
 // start a tag. A listing named `"><script>` would otherwise execute.
 const e = Bun.escapeHTML;
 
-/** The tags that differ per page but not per *kind* of page. Both callers below build
- *  the same block, so it is written once: a canonical, the card, and the size the card
- *  is drawn at so a client can reserve the space before the PNG lands.
+/** Every tag that names the page. Both callers below built the same eight lines from
+ *  their own four strings, so the strings are what they pass now and the block is
+ *  written once.
  *
  *  `canonical` is null for a page that does not exist. A 404 that named a canonical
- *  would be asking to be indexed under it. */
-function shared(canonical: string | null, image: string, alt: string): string[] {
+ *  would be asking to be indexed under it.
+ *
+ *  The twitter:* trio is spelled out rather than left to fall back to og:. X documents
+ *  that fallback and honours it, so this is belt and braces - but the file was already
+ *  wearing the belt for the image and not for the title, which is a distinction with no
+ *  reason behind it. Cheaper to be consistent than to find out which consumer disagrees:
+ *  the tags are read by Slack, Discord, LinkedIn and iMessage too, and they do not all
+ *  implement the same fallbacks. */
+function shared(meta: {
+  title: string;
+  description: string;
+  canonical: string | null;
+  image: string;
+  alt: string;
+}): string[] {
   return [
-    ...(canonical
+    `<title>${e(meta.title)}</title>`,
+    `<meta name="description" content="${e(meta.description)}" />`,
+    `<meta property="og:title" content="${e(meta.title)}" />`,
+    `<meta property="og:description" content="${e(meta.description)}" />`,
+    ...(meta.canonical
       ? [
-          `<link rel="canonical" href="${e(canonical)}" />`,
-          `<meta property="og:url" content="${e(canonical)}" />`,
+          `<link rel="canonical" href="${e(meta.canonical)}" />`,
+          `<meta property="og:url" content="${e(meta.canonical)}" />`,
         ]
       : // follow, not nofollow: the links out of a 404 are the site's own nav, and
         // there is no reason to stop a crawler using them to find its way back.
         [`<meta name="robots" content="noindex, follow" />`]),
-    `<meta property="og:image" content="${e(image)}" />`,
+    `<meta property="og:image" content="${e(meta.image)}" />`,
     `<meta property="og:image:width" content="${CARD_WIDTH}" />`,
     `<meta property="og:image:height" content="${CARD_HEIGHT}" />`,
-    `<meta property="og:image:alt" content="${e(alt)}" />`,
+    `<meta property="og:image:alt" content="${e(meta.alt)}" />`,
     // twitter:card is not here: it is "summary_large_image" on every page, so it lives
     // in index.html outside the replaced span rather than being written out per request.
-    `<meta name="twitter:image" content="${e(image)}" />`,
-    `<meta name="twitter:image:alt" content="${e(alt)}" />`,
+    `<meta name="twitter:title" content="${e(meta.title)}" />`,
+    `<meta name="twitter:description" content="${e(meta.description)}" />`,
+    `<meta name="twitter:image" content="${e(meta.image)}" />`,
+    `<meta name="twitter:image:alt" content="${e(meta.alt)}" />`,
   ];
 }
 
@@ -247,17 +266,13 @@ export function pageMeta(site: string, path: string): string {
   const known = isPagePath(path);
   const page = pageFor(path);
 
-  return [
-    `<title>${e(page.title)}</title>`,
-    `<meta name="description" content="${e(page.description)}" />`,
-    `<meta property="og:title" content="${e(page.title)}" />`,
-    `<meta property="og:description" content="${e(page.description)}" />`,
-    ...shared(
-      known ? `${site}${canonical === "/" ? "/" : canonical}` : null,
-      `${site}/og/home.png`,
-      "The outmine board: the top three listings and what each has been mined to.",
-    ),
-  ].join("\n    ");
+  return shared({
+    title: page.title,
+    description: page.description,
+    canonical: known ? `${site}${canonical === "/" ? "/" : canonical}` : null,
+    image: `${site}/og/home.png`,
+    alt: "The outmine board: the top three listings and what each has been mined to.",
+  }).join("\n    ");
 }
 
 function listingMeta(listing: ListingDetail, site: string): string {
@@ -265,18 +280,14 @@ function listingMeta(listing: ListingDetail, site: string): string {
   const description = listing.tagline || `${listing.name} on outmine, a leaderboard paid for in CPU time.`;
   const image = `${site}/og/${listing.id}.png`;
 
-  return [
-    `<title>${e(title)}</title>`,
-    `<meta name="description" content="${e(description)}" />`,
-    `<meta property="og:title" content="${e(title)}" />`,
-    `<meta property="og:description" content="${e(description)}" />`,
+  return shared({
+    title,
+    description,
     // A listing short of the gate is a name and a progress bar. Indexing it would put
     // a page with nothing on it in front of someone searching for the name, and the
     // listing gets its canonical back the moment it is mined onto the board.
-    ...shared(
-      listing.visible ? `${site}/l/${listing.id}` : null,
-      image,
-      `${listing.name}, ${standing(listing)} on outmine.`,
-    ),
-  ].join("\n    ");
+    canonical: listing.visible ? `${site}/l/${listing.id}` : null,
+    image,
+    alt: `${listing.name}, ${standing(listing)} on outmine.`,
+  }).join("\n    ");
 }
