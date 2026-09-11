@@ -5,6 +5,7 @@ import { apiUrl, request, usePolled } from "../api";
 import { points } from "../format";
 import { linkProps } from "../router";
 import { useSession } from "../session";
+import { ShareBox } from "./ShareBox";
 import { Avatar } from "./ui";
 
 /** A listing this browser created, pinned to the top of every page.
@@ -39,6 +40,9 @@ export function OwnedPanel({ id, token, onForget }: {
   if (!listing) return null;
 
   const visible = onBoard != null || fetched?.visible === 1;
+  // The snapshot is sorted by score, so a position in it is the rank. Off that first
+  // page the fetched detail carries its own; ShareBox turns a null into "needs hashes".
+  const rank = onBoard ? board.entries.indexOf(onBoard) + 1 : (fetched?.rank ?? null);
   const name = patched?.name ?? listing.name;
   const tagline = patched?.tagline ?? listing.tagline;
   const mining = mineFor === id;
@@ -114,6 +118,7 @@ export function OwnedPanel({ id, token, onForget }: {
             {copied ? "copied" : "copy edit token"}
           </button>
           <IconButton id={id} token={token} listing={listing} min={board.iconMinPoints} />
+          <ShareBox id={id} name={name} rank={rank} compact />
           <button
             onClick={() => {
               if (confirm("Forget this listing? The edit token goes with it and cannot be shown again.")) {

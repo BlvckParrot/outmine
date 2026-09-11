@@ -207,7 +207,7 @@ function overMessageRate(client: Client): boolean {
 // limited. Everything below turns what the browser said into one of a fixed set of
 // keys: (day, kind, key) is a primary key, so an unbounded key is an unbounded table.
 
-const PAGES = new Set(["/", "/about", "/rules", "/faq", "/stats"]);
+const PAGES = new Set(["/", "/about", "/rules", "/faq", "/stats", "/support"]);
 const LISTING_PATH = /^\/l\/([a-z0-9]{1,24})$/i;
 
 /** The key a path is counted under. Whitelisted rather than stored as sent - a path is
@@ -624,7 +624,7 @@ function creditShare(client: Client, difficulty: number) {
 
 // --- board --------------------------------------------------------------------
 
-function boardSnapshot(): BoardSnapshot {
+export function boardSnapshot(): BoardSnapshot {
   const hashrates = new Map<string, number>();
   const miners = new Map<string, number>();
   for (const c of clients) {

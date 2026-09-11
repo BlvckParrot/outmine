@@ -4,10 +4,12 @@
 // routes.ts because none of it is API surface - it exists for crawlers, chat clients
 // and READMEs, which have their own rules about absolute URLs and escaping.
 import { Hono, type Context } from "hono";
-import { isPagePath, normalizePath, PAGES, pageFor, type ListingDetail } from "@outmine/protocol";
+import { isPagePath, normalizePath, PAGES, pageFor, type BoardSnapshot, type ListingDetail } from "@outmine/protocol";
 import { badgeSvg, CARD_HEIGHT, CARD_WIDTH, cardPng, homeCardPng, standing } from "./cards";
 import { config } from "./config";
+import { boardSnapshot } from "./hub";
 import { getListing, listBoard, listingRank } from "./listings";
+import { log } from "./log";
 
 export const share = new Hono();
 
@@ -38,6 +40,61 @@ export function replaceMeta(html: string, meta: () => string): string {
   const end = html.indexOf(OG_CLOSE);
   if (start === -1 || end === -1 || end < start) return html;
   return html.slice(0, start) + meta() + html.slice(end + OG_CLOSE.length);
+}
+
+/** Where the crawler's copy of the page goes, inside the #root the app then takes
+ *  over. Static markup rendered from the very components the visitor sees, so there is
+ *  no second description of the site to drift out of step with the first.
+ *
+ *  Not hydration: main.tsx mounts with createRoot, which empties the container before
+ *  its first render. See the header of web/src/ssr.tsx for why hydrating is the wrong
+ *  trade here. */
+export const BODY_MARKER = "<!--body-->";
+
+type Ssr = { renderPath: (path: string, board: BoardSnapshot) => string };
+
+/** undefined: not tried yet. null: tried and unavailable, so we stop trying. */
+let ssr: Ssr | null | undefined;
+
+/** A separate build output rather than the server importing TSX directly: the
+ *  production image installs only this package's dependencies, and react is not one of
+ *  them. Loaded on first use because it is a megabyte the site does not need to boot. */
+async function loadSsr(): Promise<Ssr | null> {
+  if (ssr !== undefined) return ssr;
+  try {
+    ssr = (await import(`${config.webSsr}/ssr.js`)) as Ssr;
+  } catch (err) {
+    // A deployment without the bundle is a deployment that serves what it always did.
+    // Logged once, not once per request, which is what caching null buys.
+    log("ssr_unavailable", { error: String(err) });
+    ssr = null;
+  }
+  return ssr;
+}
+
+/** Static HTML for `path`, or "" for anything this cannot or should not render.
+ *
+ *  Every failure is swallowed. The head tags a crawler actually needs are already in
+ *  the document by the time this runs, and the browser build does not care either way -
+ *  so a render that throws costs the SEO copy of one page and nothing else. */
+export async function renderBody(path: string): Promise<string> {
+  const mod = await loadSsr();
+  if (!mod) return "";
+  try {
+    return mod.renderPath(path, boardSnapshot());
+  } catch (err) {
+    log("ssr_render_failed", { path, error: String(err) });
+    return "";
+  }
+}
+
+/** index.html with `body` inside the empty #root. Sliced rather than replaced, for the
+ *  same reason replaceMeta above takes a function: listing names reach this string and
+ *  $& and friends are replacement patterns. */
+export function replaceBody(html: string, body: string): string {
+  const at = html.indexOf(BODY_MARKER);
+  if (at === -1) return html;
+  return html.slice(0, at) + body + html.slice(at + BODY_MARKER.length);
 }
 
 /** The theme script in index.html has to run before the first paint, so it is inline,
@@ -159,7 +216,10 @@ share.get("/l/:id", async (c) => {
   const meta = listing
     ? () => listingMeta(listing, origin(c))
     : () => pageMeta(origin(c), c.req.path);
-  return c.html(replaceMeta(html, meta), listing ? 200 : 404);
+  // No body for a listing page: Listing fetches in an effect, so server-rendering it
+  // would put "Loading…" in front of a crawler. The marker still goes - it is the head
+  // tags and the sitemap that carry these pages.
+  return c.html(replaceBody(replaceMeta(html, meta), ""), listing ? 200 : 404);
 });
 
 /** robots.txt with the one line it cannot carry on disk. Sitemap: has to be an

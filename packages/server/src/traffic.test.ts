@@ -9,6 +9,7 @@ test.each([
   ["/", "/"],
   ["/about", "/about"],
   ["/stats", "/stats"],
+  ["/support", "/support"], // a page like the rest; it used to fall into /other
   ["/l/abc123", "/l/:id"],
   ["/l/ABC123", "/l/:id"], // the app's own route matches case-insensitively
   ["/nope", "/other"],

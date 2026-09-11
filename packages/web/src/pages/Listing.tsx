@@ -1,7 +1,6 @@
-import { useState } from "react";
-import { Gem } from "lucide-react";
 import type { ListingDetail } from "@outmine/protocol";
 import { apiUrl, usePolled } from "../api";
+import { ShareBox } from "../components/ShareBox";
 import { Avatar, Card, StatTile } from "../components/ui";
 import { fmt, points } from "../format";
 import { linkProps } from "../router";
@@ -11,7 +10,6 @@ import { useSession } from "../session";
  *  stand on its own: rank, score, and a way to start mining without going home first. */
 export function Listing({ id }: { id: string }) {
   const { board, mineFor, startMining, consented, accept } = useSession();
-  const [copied, setCopied] = useState(false);
   const listing = usePolled<ListingDetail>(`/api/listings/${id}`, 15_000);
 
   // The board snapshot arrives every couple of seconds; the fetch above happens once.
@@ -29,11 +27,6 @@ export function Listing({ id }: { id: string }) {
 
   const score = liveEntry?.score ?? listing.score;
   const shares = liveEntry?.shares ?? listing.shares;
-  const pageUrl = `${location.origin}/l/${id}`;
-  const badgeMarkdown = `[![outmine](${location.origin}/badge/${id}.svg)](${pageUrl})`;
-  const shareText = listing.rank
-    ? `${listing.name} is #${listing.rank} on outmine — a leaderboard paid for in CPU time, not money.`
-    : `${listing.name} needs hashes to reach the outmine board.`;
 
   return (
     <article>
@@ -82,47 +75,7 @@ export function Listing({ id }: { id: string }) {
         </div>
       )}
 
-      <section className="mt-8">
-        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold tracking-[-0.02em]">
-          <Gem className="size-4 text-primary" /> Share it
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          <a
-            href={`https://x.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(pageUrl)}`}
-            target="_blank"
-            rel="noopener"
-            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-bold text-background transition-opacity hover:opacity-85"
-          >
-            post on X
-          </a>
-          <button
-            onClick={() => {
-              navigator.clipboard?.writeText(badgeMarkdown).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              }).catch(() => {/* clipboard is blocked; the snippet is on screen anyway */});
-            }}
-            className="cursor-pointer rounded-full border border-border px-4 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
-          >
-            {copied ? "copied" : "copy badge markdown"}
-          </button>
-        </div>
-        {/* Not decorative: the badge is a preview of what the markdown below renders
-            to, and it is the only place the standing appears as an image. */}
-        <img
-          src={apiUrl(`/badge/${id}.svg`)}
-          alt={
-            listing.rank
-              ? `outmine badge: ${listing.name} at #${listing.rank}`
-              : `outmine badge: ${listing.name}, in the queue`
-          }
-          loading="lazy"
-          className="mt-3 h-5"
-        />
-        <pre className="mt-2 overflow-x-auto rounded-xl bg-muted p-3 font-mono text-[10px] text-muted-foreground">
-          {badgeMarkdown}
-        </pre>
-      </section>
+      <ShareBox id={id} name={listing.name} rank={listing.rank} />
     </article>
   );
 }

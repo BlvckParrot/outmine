@@ -21,13 +21,13 @@ import {
   clientCount, connectionCount, dropListing, loopLag, miningCount, poolHealthy, pushFeed,
 } from "./hub";
 import {
-  AuthError, boardTotals, countClick, createListing, deleteListing, getIcon, getListing,
-  listingRank, searchBoard, setHandleAvatar, setIcon, TargetError, trafficByDay,
+  AuthError, boardTotals, countClick, countHit, createListing, deleteListing, getIcon,
+  getListing, listingRank, searchBoard, setHandleAvatar, setIcon, TargetError, trafficByDay,
   trafficListings, trafficTop, trending, updateListing, visitsToday,
 } from "./listings";
 import { log, makeThrottledLog } from "./log";
 import { clientAddress, originAllowed, secretsMatch } from "./security";
-import { fillMarkers, observeConfigured, origin, pageMeta, replaceMeta, share } from "./share";
+import { fillMarkers, observeConfigured, origin, pageMeta, renderBody, replaceBody, replaceMeta, share } from "./share";
 
 /** Handed in by server.ts, which is the only layer that can see the socket. */
 export type RequestContext = { socketAddress?: string };
@@ -305,6 +305,11 @@ app.post("/api/listings", newListingLimit, boundedBody(config.limits.maxBodyByte
     const { listing, editToken } = createListing(c.req.valid("json"));
     pushFeed(`${listing.name} joined and needs hashes`);
     log("listing_created", { id: listing.id, target: listing.target });
+    // The step between a visit and a mine. Without it /admin/traffic shows the two
+    // ends of the funnel and nothing about where people fall out of the middle.
+    // Not "listing": that kind is already a view of one, and trafficByDay sums every
+    // key of a kind - so counting creations there would inflate the views column.
+    countHit("created");
 
     // Fire-and-forget: the response never waits on a third party. Best-effort, so a
     // failed or unconfigured fetch just leaves today's letter placeholder in place.
@@ -466,7 +471,7 @@ function table(title: string, head: string[], rows: (string | number)[][]): stri
 function trafficPage(): string {
   const days = trafficByDay(30).map((d) => [
     new Date(d.day * DAY_MS).toISOString().slice(0, 10),
-    d.visits, d.pages, d.views, d.mines, percent(d.mines, d.visits),
+    d.visits, d.pages, d.created, d.views, d.mines, percent(d.mines, d.visits),
   ]);
 
   return `<!doctype html><meta charset="utf-8"><title>outmine traffic</title>
@@ -481,7 +486,7 @@ function trafficPage(): string {
 <h1>outmine traffic</h1>
 <p>Last 30 days. A visit is one page load, counted on the socket the page already
 holds - so nothing here saw a crawler, and nothing here knows who anyone is.</p>
-${table("by day", ["day", "visits", "pageviews", "listing views", "mining starts", "conversion"], days)}
+${table("by day", ["day", "visits", "pageviews", "listings made", "listing views", "mining starts", "conversion"], days)}
 ${table("referrers", ["host", "visits"], trafficTop("ref").map((r) => [r.key, r.n]))}
 ${table("pages", ["path", "views"], trafficTop("page").map((r) => [r.key, r.n]))}
 ${table(
@@ -508,7 +513,7 @@ async function indexHandler(c: Context) {
 
   const path = c.req.path;
   const html = replaceMeta(fillMarkers(c, await index.text()), () => pageMeta(origin(c), path));
-  return c.html(html, isKnownPath(path) ? 200 : 404);
+  return c.html(replaceBody(html, await renderBody(path)), isKnownPath(path) ? 200 : 404);
 }
 
 // Both spellings, and index.html is kept out of the native routes in server.ts, or the
