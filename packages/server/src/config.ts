@@ -197,6 +197,11 @@ export const config = {
    *  works; the image overrides it when the layout differs. */
   webDist: process.env.WEB_DIST?.trim() || new URL("../../web/dist", import.meta.url).pathname,
 
+  /** The SSR bundle beside it: one module that renders a page's HTML from the same
+   *  components the browser build ships, for whoever does not run JavaScript. Its
+   *  absence is not an error - the site serves the empty #root it always did. */
+  webSsr: process.env.WEB_SSR?.trim() || new URL("../../web/dist-ssr", import.meta.url).pathname,
+
   pool: {
     host: str("POOL_HOST", "rinhash.mine.zpool.ca"),
 

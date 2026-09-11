@@ -494,7 +494,7 @@ export const refKeysToday = (): string[] =>
   ).all(today()).map((r) => r.key);
 
 export type TrafficDay = {
-  day: number; visits: number; pages: number; views: number; mines: number;
+  day: number; visits: number; pages: number; created: number; views: number; mines: number;
 };
 
 /** One row per day with the kinds pivoted into columns, so the report is a loop over
@@ -504,6 +504,7 @@ export const trafficByDay = (days = 30): TrafficDay[] =>
     `SELECT day,
             COALESCE(SUM(n) FILTER (WHERE kind = 'visit'), 0)   AS visits,
             COALESCE(SUM(n) FILTER (WHERE kind = 'page'), 0)    AS pages,
+            COALESCE(SUM(n) FILTER (WHERE kind = 'created'), 0) AS created,
             COALESCE(SUM(n) FILTER (WHERE kind = 'listing'), 0) AS views,
             COALESCE(SUM(n) FILTER (WHERE kind = 'mine'), 0)    AS mines
      FROM traffic WHERE day >= ?

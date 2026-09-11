@@ -80,6 +80,10 @@ COPY scripts ./scripts
 # Laid out as in the repo so the server's default WEB_DIST (../../web/dist relative to
 # its own source) resolves without configuration.
 COPY --from=web /app/packages/web/dist ./packages/web/dist
+# The crawler renderer beside it. Its own output because the server imports it at
+# runtime and this image installs only the server's dependencies - react is bundled
+# into it rather than resolved from node_modules. See web/src/ssr.tsx.
+COPY --from=web /app/packages/web/dist-ssr ./packages/web/dist-ssr
 
 # The database and the backups are the only things the process writes, so they are the
 # only things it owns. Everything else stays root-owned and read-only to the app.

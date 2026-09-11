@@ -1,6 +1,7 @@
 node_modules/
 packages/wasm/build/
 packages/web/dist/
+packages/web/dist-ssr/
 packages/web/public/mine-*.mjs
 packages/web/public/mine-*.wasm
 data/
