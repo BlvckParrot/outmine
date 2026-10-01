@@ -39,7 +39,7 @@ RUN ./build.sh
 # dist/, which is JavaScript and CSS and carries no architecture. Running Vite, rolldown
 # and Tailwind's oxide binding natively rather than under emulation is the difference
 # between seconds and minutes on a cross build, and the output is byte-identical.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS web
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.2 AS web
 WORKDIR /app
 # Workspace manifests first so the dependency layer caches independently of sources.
 COPY package.json bun.lock* tsconfig.json ./
@@ -60,7 +60,7 @@ RUN bun --filter @outmine/web build
 # have to. Nothing is compiled here - `bun install --production` resolves prebuilt
 # binaries, and @resvg/resvg-js is the one native package that matters - so this is cheap
 # to build under emulation for an architecture the builder is not.
-FROM oven/bun:1.4.0
+FROM oven/bun:1.4.2
 WORKDIR /app
 # Every workspace in the lockfile must exist on disk, even ones this stage does not
 # install from, or bun install refuses to resolve.
